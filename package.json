@@ -1,0 +1,40 @@
+{
+  "name": "@dsh-external/dsh-llm-retry-settings",
+  "version": "0.0.1",
+  "description": "LLM 自动重试设置卡片：在 设置 → General 里修改重试次数（maxRetries）与退避时间（initialDelayMs/maxDelayMs/jitterRatio），宿主 dsh-llm-retry 实时生效",
+  "private": true,
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "license": "BSD-3-Clause",
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-web-react"
+      ],
+      "platform": "web"
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}
