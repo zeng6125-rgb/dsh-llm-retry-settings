@@ -109,4 +109,4 @@ npm run typecheck    # tsc --noEmit
 
 ## License
 
-[BSD-3-Clause](./LICENSE)
+[MIT](./LICENSE)
