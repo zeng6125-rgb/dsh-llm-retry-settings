@@ -6,9 +6,71 @@ A settings card for the DSH LLM auto-retry engine (`@deepseek-ai/dsh-llm-retry`)
 
 ## Features
 
+- **Includes the settings UI** (client bundle `lib/client.js`): a card in **Settings → General** — no separate UI package needed.
 - Overrides `maxRetries`, `initialDelayMs`, `maxDelayMs`, and `jitterRatio` on the `agent/request-error` retry policy.
 - Preserves each provider's own `mode` and `retryableCodes` — only the retry count and backoff timing are overridden.
 - Default `enabled: false` = fully bypassed; nothing changes until you enable the override.
+
+## Install
+
+Prerequisite: a DSH Desktop profile (the web profile lives at `~/.dsh/profiles/web`).
+
+### Option A — GitHub Release package (recommended)
+
+```bash
+# 1. download the packaged plugin tgz from the v0.0.1 release
+gh release download v0.0.1 -R zeng6125-rgb/dsh-llm-retry-settings
+
+# 2. unpack it into the profile's node_modules
+mkdir -p ~/.dsh/profiles/web/node_modules/@dsh-external
+tar -xzf dsh-external-dsh-llm-retry-settings-0.0.1.tgz -C ~/.dsh/profiles/web/node_modules/@dsh-external/
+mv ~/.dsh/profiles/web/node_modules/@dsh-external/package \
+   ~/.dsh/profiles/web/node_modules/@dsh-external/dsh-llm-retry-settings
+
+# 3. register the bundle in the profile, then restart DSH
+#    add "@dsh-external/dsh-llm-retry-settings" to dsh.profile.bundles
+#    in ~/.dsh/profiles/web/package.json
+```
+
+### Option B — dsh CLI / pnpm (requires git + network)
+
+The `dsh plugin` command forwards its arguments to `pnpm` in the profile directory:
+
+```bash
+# from a git repo (pnpm clones it; the committed lib/ means no build needed)
+dsh plugin --profile web add github:zeng6125-rgb/dsh-llm-retry-settings
+
+# or from the release tarball URL
+dsh plugin --profile web add https://github.com/zeng6125-rgb/dsh-llm-retry-settings/releases/download/v0.0.1/dsh-external-dsh-llm-retry-settings-0.0.1.tgz
+```
+
+Then enable the plugin in the profile: add `"@dsh-external/dsh-llm-retry-settings"` to `dsh.profile.bundles` (or use the Desktop plugin-inventory UI) and restart DSH.
+
+> Note: the command is `dsh plugin` (a subcommand of the `dsh` CLI), not `dsh-plugin`. The `dsh` CLI is bundled with the Desktop app; if it is not on your `PATH`, invoke it via the app's `node_modules` bin, e.g. `node "<app>/node_modules/@deepseek-ai/dsh/lib/bin.js" plugin --profile web ...`.
+
+### Option C — from source
+
+```bash
+git clone https://github.com/zeng6125-rgb/dsh-llm-retry-settings.git
+cd dsh-llm-retry-settings
+npm run build        # bash scripts/build.sh (requires DSH_CHECKOUT)
+```
+
+Link the local build into the profile and register the bundle:
+
+```bash
+dsh plugin --profile web link "$PWD"
+# then add "@dsh-external/dsh-llm-retry-settings" to dsh.profile.bundles and restart DSH
+```
+
+## Usage
+
+1. Open DSH **Settings → General**.
+2. Find the **LLM 自动重试** card.
+3. Toggle **开启覆盖** (`enabled`) to apply the override.
+4. Set `maxRetries` / `initialDelayMs` / `maxDelayMs` / `jitterRatio` and click **保存**.
+
+Changes are written to the `dsh-llm-retry` settings namespace and picked up live by the retry engine.
 
 ## Configuration
 
@@ -30,7 +92,7 @@ agent/request-error  →  [this plugin: override count/backoff]  →  dsh-llm-re
 
 ## UI
 
-Settings → General → **LLM 自动重试** card. Edits are draft-based: click **Save** to commit or **Revert** to discard. After saving, the card verifies the write against the settings snapshot and shows `已保存 ✓` / `保存失败 ✗`.
+Settings → General → **LLM 自动重试** card. Edits are draft-based: click **保存** to commit or **放弃** to discard. After saving, the card verifies the write against the settings snapshot and shows `已保存 ✓` / `保存失败 ✗`.
 
 ## Requirements
 
