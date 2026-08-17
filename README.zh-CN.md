@@ -6,9 +6,70 @@ DSH「LLM 自动重试」设置卡片：在 **设置 → General** 里调整自�
 
 ## 功能
 
+- **自带设置 UI**（客户端 bundle `lib/client.js`）：一张位于 **设置 → General** 的卡片，无需另外装 UI 包。
 - 覆盖 `agent/request-error` 重试策略中的 `maxRetries`、`initialDelayMs`、`maxDelayMs`、`jitterRatio`。
 - 保留各 provider 自带的 `mode` 与 `retryableCodes` —— 只覆盖「次数」和「退避时间」。
 - 默认 `enabled: false` = 完全旁路：不开启覆盖时，不改动任何东西。
+
+## 安装
+
+前置：一个 DSH Desktop profile（web profile 位于 `~/.dsh/profiles/web`）。
+
+### 方式 A —— GitHub Release 安装包（推荐）
+
+```bash
+# 1. 从 v0.0.1 release 下载打包好的插件 tgz
+gh release download v0.0.1 -R zeng6125-rgb/dsh-llm-retry-settings
+
+# 2. 解压进 profile 的 node_modules
+mkdir -p ~/.dsh/profiles/web/node_modules/@dsh-external
+tar -xzf dsh-external-dsh-llm-retry-settings-0.0.1.tgz -C ~/.dsh/profiles/web/node_modules/@dsh-external/
+mv ~/.dsh/profiles/web/node_modules/@dsh-external/package \
+   ~/.dsh/profiles/web/node_modules/@dsh-external/dsh-llm-retry-settings
+
+# 3. 在 profile 里注册 bundle，然后重启 DSH
+#    在 ~/.dsh/profiles/web/package.json 的 dsh.profile.bundles 里加 "@dsh-external/dsh-llm-retry-settings"
+```
+
+### 方式 B —— dsh CLI / pnpm（需要 git + 网络）
+
+`dsh plugin` 命令会把参数转发给 profile 目录里的 `pnpm`：
+
+```bash
+# 从 git 仓库安装（pnpm 会 clone；lib/ 已提交，无需构建）
+dsh plugin --profile web add github:zeng6125-rgb/dsh-llm-retry-settings
+
+# 或从 release tarball 地址安装
+dsh plugin --profile web add https://github.com/zeng6125-rgb/dsh-llm-retry-settings/releases/download/v0.0.1/dsh-external-dsh-llm-retry-settings-0.0.1.tgz
+```
+
+装完还需要在 profile 里启用：把 `"@dsh-external/dsh-llm-retry-settings"` 加进 `dsh.profile.bundles`（或使用 Desktop 的插件管理 UI），然后重启 DSH。
+
+> 注意：命令是 **`dsh plugin`**（`dsh` CLI 的子命令），不是 `dsh-plugin`。`dsh` CLI 随 Desktop 应用内置；如果不在 `PATH` 里，用 app 的 bin 调用，例如 `node "<app>/node_modules/@deepseek-ai/dsh/lib/bin.js" plugin --profile web ...`。
+
+### 方式 C —— 源码
+
+```bash
+git clone https://github.com/zeng6125-rgb/dsh-llm-retry-settings.git
+cd dsh-llm-retry-settings
+npm run build        # bash scripts/build.sh（需要 DSH_CHECKOUT）
+```
+
+把本地构建 link 进 profile 并注册 bundle：
+
+```bash
+dsh plugin --profile web link "$PWD"
+# 然后把 "@dsh-external/dsh-llm-retry-settings" 加进 dsh.profile.bundles 并重启 DSH
+```
+
+## 使用
+
+1. 打开 DSH **设置 → General**。
+2. 找到 **LLM 自动重试** 卡片。
+3. 打开 **开启覆盖**（`enabled`）。
+4. 设置 `maxRetries` / `initialDelayMs` / `maxDelayMs` / `jitterRatio`，点 **保存**。
+
+改动会写入 `dsh-llm-retry` 设置命名空间，重试引擎实时生效。
 
 ## 配置项
 
