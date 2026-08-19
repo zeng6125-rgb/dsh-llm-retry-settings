@@ -26,6 +26,9 @@
         "@deepseek-ai/dsh-client-web-react"
       ],
       "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
     }
   },
   "devDependencies": {

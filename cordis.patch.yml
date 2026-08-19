@@ -1,0 +1,7 @@
+# dsh-llm-retry-settings bundle layer: applied automatically when the package
+# is installed (package.json declares dsh.bundle.patch). Mounts the host-side
+# entry that registers the dsh-llm-retry settings namespace; without it the
+# settings card renders but stays disabled (scope unavailable).
+- insert:
+    - id: llm-retry-settings
+      name: '@dsh-external/dsh-llm-retry-settings'

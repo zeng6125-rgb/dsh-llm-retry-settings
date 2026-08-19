@@ -1,9 +1,10 @@
 /**
- * @dsh-external/dsh-llm-retry-settings — 客户端设置 UI（设置 → General 卡片）
+ * @dsh-external/dsh-llm-retry-settings — 客户端设置 UI（设置 → 独立分区「LLM 自动重试」）
  *
  * 绑定宿主 @deepseek-ai/dsh-llm-retry 注册的 `dsh-llm-retry` 命名空间：
  *  - ctx.settingsScope.bind({ namespace: 'dsh-llm-retry' })
- *  - 在 settings.general.item 槽位注册一行卡片
+ *  - 在 settings.section 槽位注册独立分区（设置页左侧导航项「LLM 自动重试」，
+ *    不再混入通用设置的 General 卡片）
  *  - inject: ["slots", "settingsScope"]，运行时由客户端 runner 注入
  *
  * 交互模型（草稿 + 显式保存）：
@@ -245,12 +246,13 @@ export function apply(ctx) {
   ensureCss()
   const scope = ctx.settingsScope.bind({ namespace: NS })
   const useScope = bindSnapshotSelector(scope)
-  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-    name: 'settings.general.item',
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section',
     id: 'llm-retry-settings',
-    order: 25,
+    order: 15,
+    label: () => 'LLM 自动重试',
     inject: () => ({ useScope, scope })
-  }, RetrySettingsRow), PLUGIN_ID + ': settings row')
+  }, RetrySettingsRow), PLUGIN_ID + ': settings section')
 }
 
 export const inject = ['slots', 'settingsScope']
