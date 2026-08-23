@@ -22,8 +22,17 @@ const NS = 'dsh-llm-retry'
 const PLUGIN_ID = '@dsh-external/dsh-llm-retry-settings'
 const CSS_TAG = PLUGIN_ID + '/client.css'
 
-import { useState, useCallback } from 'react'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-web-react'
+import { useState, useCallback, useSyncExternalStore } from 'react'
+
+// [rc.8 compat] dsh-client-web-react 移除了静态模块导出；
+// bindSnapshotSelector 本是 uSES selector bridge，这里用 useSyncExternalStore 内联等价实现。
+function bindSnapshotSelector(scope) {
+  const subscribe = (fn) => scope.subscribe(fn)
+  const getSnapshot = () => scope.getSnapshot()
+  return function useSelector(sel) {
+    return sel(useSyncExternalStore(subscribe, getSnapshot))
+  }
+}
 
 const DEFAULTS = {
   enabled: false,
