@@ -8,7 +8,7 @@ A settings card for the DSH LLM auto-retry engine (`@deepseek-ai/dsh-llm-retry`)
 
 - **Includes the settings UI** (client bundle `lib/client.js`): a card in **Settings → General** — no separate UI package needed.
 - Overrides `maxRetries`, `initialDelayMs`, `maxDelayMs`, and `jitterRatio` on the `agent/request-error` retry policy.
-- Preserves each provider's own `mode` and `retryableCodes` — only the retry count and backoff timing are overridden.
+- **New in 0.1.3** — configurable `retryableCodes`: extra failure codes to retry on, **merged** into each provider's own list (never replaces it). Defaults to `INVALID_REQUEST` + `PI_AI_ERROR`, so OpenAI-style HTTP 400 errors (thinking-mode `reasoning_text`) and generic stream failures get retried out of the box.
 - Default `enabled: false` = fully bypassed; nothing changes until you enable the override.
 
 ## Install
@@ -68,7 +68,7 @@ dsh plugin --profile web link "$PWD"
 1. Open DSH **Settings → General**.
 2. Find the **LLM 自动重试** card.
 3. Toggle **开启覆盖** (`enabled`) to apply the override.
-4. Set `maxRetries` / `initialDelayMs` / `maxDelayMs` / `jitterRatio` and click **保存**.
+4. Set `maxRetries` / `initialDelayMs` / `maxDelayMs` / `jitterRatio`, pick extra **retryable codes** (chips), and click **保存**.
 
 Changes are written to the `dsh-llm-retry` settings namespace and picked up live by the retry engine.
 
@@ -81,6 +81,7 @@ Changes are written to the `dsh-llm-retry` settings namespace and picked up live
 | `initialDelayMs` | integer (≥ 1) | `500` | Initial backoff before the first retry (ms). |
 | `maxDelayMs` | integer (≥ 1) | `10000` | Upper bound for backoff (ms). |
 | `jitterRatio` | number (0–1) | `0.1` | Random jitter applied to backoff (0 = none). |
+| `retryableCodes` | string[] | `["INVALID_REQUEST", "PI_AI_ERROR"]` | Extra failure codes treated as retryable, **merged** into each provider's own list. |
 
 ## How it works
 

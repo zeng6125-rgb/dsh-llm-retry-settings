@@ -23,6 +23,8 @@ export interface Config {
   initialDelayMs: number
   maxDelayMs: number
   jitterRatio: number
+  /** 补充到重试码列表的额外 code,与 provider 默认值合并(不去重覆盖)。空数组=不补充。 */
+  retryableCodes: string[]
 }
 
 export const Config = z.object({
@@ -31,15 +33,21 @@ export const Config = z.object({
   initialDelayMs: z.number().min(1).default(500),
   maxDelayMs: z.number().min(1).default(10000),
   jitterRatio: z.number().min(0).max(1).default(0.1),
+  // 内置默认补充码：400 reasoning_text（INVALID_REQUEST）与 pi-ai 兜底错误
+  // （PI_AI_ERROR，覆盖 STREAM_ERROR 等流式失败）。开启 enabled 即自动拦截重试，
+  // 用户可在设置卡片追加/清空。
+  retryableCodes: z.array(z.string()).default(['INVALID_REQUEST', 'PI_AI_ERROR']),
 })
 
 function resolveConfig(config: Partial<Config> | undefined): Config {
+  const rc = config?.retryableCodes
   return {
     enabled: config?.enabled ?? false,
     maxRetries: Math.max(0, Math.floor(config?.maxRetries ?? 2)),
     initialDelayMs: Math.max(1, Math.floor(config?.initialDelayMs ?? 500)),
     maxDelayMs: Math.max(1, Math.floor(config?.maxDelayMs ?? 10000)),
     jitterRatio: Math.min(1, Math.max(0, config?.jitterRatio ?? 0.1)),
+    retryableCodes: Array.isArray(rc) ? rc.filter((c) => typeof c === 'string' && c.length > 0) : ['INVALID_REQUEST', 'PI_AI_ERROR'],
   }
 }
 
@@ -53,6 +61,9 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
     if (typeof next.initialDelayMs === 'number') live.initialDelayMs = Math.max(1, Math.floor(next.initialDelayMs))
     if (typeof next.maxDelayMs === 'number') live.maxDelayMs = Math.max(1, Math.floor(next.maxDelayMs))
     if (typeof next.jitterRatio === 'number') live.jitterRatio = Math.min(1, Math.max(0, next.jitterRatio))
+    if (Array.isArray(next.retryableCodes)) {
+      live.retryableCodes = next.retryableCodes.filter((c: unknown) => typeof c === 'string' && c.length > 0) as string[]
+    }
     if (live.initialDelayMs > live.maxDelayMs) live.initialDelayMs = live.maxDelayMs
   }
 
@@ -80,9 +91,13 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
     (payload: { retryPolicy?: any } | undefined, next: (() => Promise<unknown>) | undefined) => {
       if (live.enabled && payload && payload.retryPolicy && typeof payload.retryPolicy === 'object') {
         const p = payload.retryPolicy
+        const mergedCodes = live.retryableCodes.length > 0
+          ? [...new Set([...(p.retryableCodes ?? []), ...live.retryableCodes])]
+          : p.retryableCodes
         payload.retryPolicy = {
           ...p,
           ...(p.mode === 'normal' ? { maxRetries: live.maxRetries } : {}),
+          ...(mergedCodes ? { retryableCodes: mergedCodes } : {}),
           initialDelayMs: live.initialDelayMs,
           maxDelayMs: live.maxDelayMs,
           jitterRatio: live.jitterRatio,

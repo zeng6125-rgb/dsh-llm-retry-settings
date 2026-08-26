@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-llm-retry-settings",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "LLM 自动重试设置卡片：在 设置 → General 里修改重试次数（maxRetries）与退避时间（initialDelayMs/maxDelayMs/jitterRatio），宿主 dsh-llm-retry 实时生效",
   "private": true,
   "type": "module",

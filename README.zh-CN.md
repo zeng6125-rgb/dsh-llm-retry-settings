@@ -8,7 +8,7 @@ DSH「LLM 自动重试」设置卡片：在 **设置 → General** 里调整自�
 
 - **自带设置 UI**（客户端 bundle `lib/client.js`）：一张位于 **设置 → General** 的卡片，无需另外装 UI 包。
 - 覆盖 `agent/request-error` 重试策略中的 `maxRetries`、`initialDelayMs`、`maxDelayMs`、`jitterRatio`。
-- 保留各 provider 自带的 `mode` 与 `retryableCodes` —— 只覆盖「次数」和「退避时间」。
+- **0.1.3 新增** `retryableCodes`：可勾选的额外重试错误码，与各 provider 自带列表 **合并（去重）而非替换**。默认补入 `INVALID_REQUEST` + `PI_AI_ERROR`，开箱即重试 OpenAI 式 HTTP 400（thinking 模式 `reasoning_text`）与流式失败兜底码。
 - 默认 `enabled: false` = 完全旁路：不开启覆盖时，不改动任何东西。
 
 ## 安装
@@ -67,7 +67,7 @@ dsh plugin --profile web link "$PWD"
 1. 打开 DSH **设置 → General**。
 2. 找到 **LLM 自动重试** 卡片。
 3. 打开 **开启覆盖**（`enabled`）。
-4. 设置 `maxRetries` / `initialDelayMs` / `maxDelayMs` / `jitterRatio`，点 **保存**。
+4. 设置 `maxRetries` / `initialDelayMs` / `maxDelayMs` / `jitterRatio`，按需点选 **可重试错误码** chip，点 **保存**。
 
 改动会写入 `dsh-llm-retry` 设置命名空间，重试引擎实时生效。
 
@@ -80,6 +80,7 @@ dsh plugin --profile web link "$PWD"
 | `initialDelayMs` | integer（≥ 1） | `500` | 首次重试前的初始退避（毫秒）。 |
 | `maxDelayMs` | integer（≥ 1） | `10000` | 退避时间上限（毫秒）。 |
 | `jitterRatio` | number（0–1） | `0.1` | 退避抖动比例（0 = 无抖动）。 |
+| `retryableCodes` | string[] | `["INVALID_REQUEST", "PI_AI_ERROR"]` | 额外视为可重试的错误码，与各 provider 自带列表合并。 |
 
 ## 工作原理
 

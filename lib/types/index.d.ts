@@ -17,6 +17,8 @@ export interface Config {
     initialDelayMs: number;
     maxDelayMs: number;
     jitterRatio: number;
+    /** 补充到重试码列表的额外 code,与 provider 默认值合并(不去重覆盖)。空数组=不补充。 */
+    retryableCodes: string[];
 }
 export declare const Config: any;
 export declare function apply(ctx: Context, config: Partial<Config> | undefined): void;
