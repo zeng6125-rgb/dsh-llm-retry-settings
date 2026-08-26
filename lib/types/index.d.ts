@@ -1,5 +1,5 @@
 /**
- * @dsh-external/dsh-llm-retry-settings — 宿主半边
+ * dsh-llm-retry-settings — 宿主半边
  *
  * 1. 注册设置命名空间 `dsh-llm-retry`（schema 校验 + 持久化 + live 同步），
  *    客户端卡片绑定同一命名空间读写。
@@ -9,7 +9,7 @@
  *    enabled=false（默认）时完全旁路，不改任何东西。
  */
 import type { Context } from '@deepseek-ai/cordis';
-export declare const name = "@dsh-external/dsh-llm-retry-settings";
+export declare const name = "dsh-llm-retry-settings";
 export declare const inject: string[];
 export interface Config {
     enabled: boolean;

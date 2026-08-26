@@ -1,4 +1,4 @@
-# @dsh-external/dsh-llm-retry-settings
+# dsh-llm-retry-settings
 
 DSH「LLM 自动重试」设置卡片：在 **设置 → General** 里调整自动重试的次数与退避时间，宿主 `@deepseek-ai/dsh-llm-retry` 实时生效。
 
@@ -18,17 +18,17 @@ DSH「LLM 自动重试」设置卡片：在 **设置 → General** 里调整自�
 ### 方式 A —— GitHub Release 安装包（推荐）
 
 ```bash
-# 1. 从 v0.0.1 release 下载打包好的插件 tgz
-gh release download v0.0.1 -R zeng6125-rgb/dsh-llm-retry-settings
+# 1. 从 v0.1.4 release 下载打包好的插件 tgz
+gh release download v0.1.4 -R zeng6125-rgb/dsh-llm-retry-settings
 
 # 2. 解压进 profile 的 node_modules
-mkdir -p ~/.dsh/profiles/web/node_modules/@dsh-external
-tar -xzf dsh-external-dsh-llm-retry-settings-0.0.1.tgz -C ~/.dsh/profiles/web/node_modules/@dsh-external/
-mv ~/.dsh/profiles/web/node_modules/@dsh-external/package \
-   ~/.dsh/profiles/web/node_modules/@dsh-external/dsh-llm-retry-settings
+mkdir -p ~/.dsh/profiles/web/node_modules
+tar -xzf dsh-llm-retry-settings-0.1.4.tgz -C ~/.dsh/profiles/web/node_modules/
+mv ~/.dsh/profiles/web/node_modules/package \
+   ~/.dsh/profiles/web/node_modules/dsh-llm-retry-settings
 
 # 3. 在 profile 里注册 bundle，然后重启 DSH
-#    在 ~/.dsh/profiles/web/package.json 的 dsh.profile.bundles 里加 "@dsh-external/dsh-llm-retry-settings"
+#    在 ~/.dsh/profiles/web/package.json 的 dsh.profile.bundles 里加 "dsh-llm-retry-settings"
 ```
 
 ### 方式 B —— dsh CLI / pnpm（需要 git + 网络）
@@ -40,10 +40,10 @@ mv ~/.dsh/profiles/web/node_modules/@dsh-external/package \
 dsh plugin --profile web add github:zeng6125-rgb/dsh-llm-retry-settings
 
 # 或从 release tarball 地址安装
-dsh plugin --profile web add https://github.com/zeng6125-rgb/dsh-llm-retry-settings/releases/download/v0.0.1/dsh-external-dsh-llm-retry-settings-0.0.1.tgz
+dsh plugin --profile web add https://github.com/zeng6125-rgb/dsh-llm-retry-settings/releases/download/v0.1.4/dsh-llm-retry-settings-0.1.4.tgz
 ```
 
-装完还需要在 profile 里启用：把 `"@dsh-external/dsh-llm-retry-settings"` 加进 `dsh.profile.bundles`（或使用 Desktop 的插件管理 UI），然后重启 DSH。
+装完还需要在 profile 里启用：把 `"dsh-llm-retry-settings"` 加进 `dsh.profile.bundles`（或使用 Desktop 的插件管理 UI），然后重启 DSH。
 
 > 注意：命令是 **`dsh plugin`**（`dsh` CLI 的子命令），不是 `dsh-plugin`。`dsh` CLI 随 Desktop 应用内置；如果不在 `PATH` 里，用 app 的 bin 调用，例如 `node "<app>/node_modules/@deepseek-ai/dsh/lib/bin.js" plugin --profile web ...`。
 
@@ -59,7 +59,7 @@ npm run build        # bash scripts/build.sh（需要 DSH_CHECKOUT）
 
 ```bash
 dsh plugin --profile web link "$PWD"
-# 然后把 "@dsh-external/dsh-llm-retry-settings" 加进 dsh.profile.bundles 并重启 DSH
+# 然后把 "dsh-llm-retry-settings" 加进 dsh.profile.bundles 并重启 DSH
 ```
 
 ## 使用

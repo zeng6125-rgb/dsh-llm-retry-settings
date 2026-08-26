@@ -4,4 +4,4 @@
 # settings card renders but stays disabled (scope unavailable).
 - insert:
     - id: llm-retry-settings
-      name: '@dsh-external/dsh-llm-retry-settings'
+      name: 'dsh-llm-retry-settings'

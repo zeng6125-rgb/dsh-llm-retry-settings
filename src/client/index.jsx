@@ -18,7 +18,7 @@
  */
 
 const NS = 'dsh-llm-retry'
-const PLUGIN_ID = '@dsh-external/dsh-llm-retry-settings'
+const PLUGIN_ID = 'dsh-llm-retry-settings'
 const CSS_TAG = PLUGIN_ID + '/client.css'
 
 import { useState, useCallback, useSyncExternalStore } from 'react'

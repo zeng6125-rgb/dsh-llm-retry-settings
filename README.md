@@ -1,4 +1,4 @@
-# @dsh-external/dsh-llm-retry-settings
+# dsh-llm-retry-settings
 
 A settings card for the DSH LLM auto-retry engine (`@deepseek-ai/dsh-llm-retry`). Tune the retry count and backoff from **Settings → General**; changes take effect immediately.
 
@@ -18,17 +18,17 @@ Prerequisite: a DSH Desktop profile (the web profile lives at `~/.dsh/profiles/w
 ### Option A — GitHub Release package (recommended)
 
 ```bash
-# 1. download the packaged plugin tgz from the v0.0.1 release
-gh release download v0.0.1 -R zeng6125-rgb/dsh-llm-retry-settings
+# 1. download the packaged plugin tgz from the v0.1.4 release
+gh release download v0.1.4 -R zeng6125-rgb/dsh-llm-retry-settings
 
 # 2. unpack it into the profile's node_modules
-mkdir -p ~/.dsh/profiles/web/node_modules/@dsh-external
-tar -xzf dsh-external-dsh-llm-retry-settings-0.0.1.tgz -C ~/.dsh/profiles/web/node_modules/@dsh-external/
-mv ~/.dsh/profiles/web/node_modules/@dsh-external/package \
-   ~/.dsh/profiles/web/node_modules/@dsh-external/dsh-llm-retry-settings
+mkdir -p ~/.dsh/profiles/web/node_modules
+tar -xzf dsh-llm-retry-settings-0.1.4.tgz -C ~/.dsh/profiles/web/node_modules/
+mv ~/.dsh/profiles/web/node_modules/package \
+   ~/.dsh/profiles/web/node_modules/dsh-llm-retry-settings
 
 # 3. register the bundle in the profile, then restart DSH
-#    add "@dsh-external/dsh-llm-retry-settings" to dsh.profile.bundles
+#    add "dsh-llm-retry-settings" to dsh.profile.bundles
 #    in ~/.dsh/profiles/web/package.json
 ```
 
@@ -41,10 +41,10 @@ The `dsh plugin` command forwards its arguments to `pnpm` in the profile directo
 dsh plugin --profile web add github:zeng6125-rgb/dsh-llm-retry-settings
 
 # or from the release tarball URL
-dsh plugin --profile web add https://github.com/zeng6125-rgb/dsh-llm-retry-settings/releases/download/v0.0.1/dsh-external-dsh-llm-retry-settings-0.0.1.tgz
+dsh plugin --profile web add https://github.com/zeng6125-rgb/dsh-llm-retry-settings/releases/download/v0.1.4/dsh-llm-retry-settings-0.1.4.tgz
 ```
 
-Then enable the plugin in the profile: add `"@dsh-external/dsh-llm-retry-settings"` to `dsh.profile.bundles` (or use the Desktop plugin-inventory UI) and restart DSH.
+Then enable the plugin in the profile: add `"dsh-llm-retry-settings"` to `dsh.profile.bundles` (or use the Desktop plugin-inventory UI) and restart DSH.
 
 > Note: the command is `dsh plugin` (a subcommand of the `dsh` CLI), not `dsh-plugin`. The `dsh` CLI is bundled with the Desktop app; if it is not on your `PATH`, invoke it via the app's `node_modules` bin, e.g. `node "<app>/node_modules/@deepseek-ai/dsh/lib/bin.js" plugin --profile web ...`.
 
@@ -60,7 +60,7 @@ Link the local build into the profile and register the bundle:
 
 ```bash
 dsh plugin --profile web link "$PWD"
-# then add "@dsh-external/dsh-llm-retry-settings" to dsh.profile.bundles and restart DSH
+# then add "dsh-llm-retry-settings" to dsh.profile.bundles and restart DSH
 ```
 
 ## Usage
