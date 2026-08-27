@@ -1,7 +1,7 @@
 /**
- * @dsh-external/dsh-llm-retry-settings — 客户端设置 UI（设置 → 独立分区「LLM 自动重试」）
+ * dsh-llm-retry-settings — 客户端设置 UI（设置 → 独立分区「LLM 自动重试」）
  *
- * 绑定宿主 @deepseek-ai/dsh-llm-retry 注册的 `dsh-llm-retry` 命名空间：
+ * 绑定本插件宿主半边（src/index.ts）注册的 `dsh-llm-retry` 命名空间：
  *  - ctx.settingsScope.bind({ namespace: 'dsh-llm-retry' })
  *  - 在 settings.section 槽位注册独立分区（设置页左侧导航项「LLM 自动重试」）
  *  - inject: ["slots", "settingsScope"]，运行时由客户端 runner 注入
@@ -33,6 +33,7 @@ function bindSnapshotSelector(scope) {
   }
 }
 
+// 与宿主 src/index.ts 的 DEFAULTS 镜像（客户端拿不到宿主导出，此处手抄，改动需两处同步）
 const DEFAULTS = {
   enabled: false,
   maxRetries: 2,
@@ -70,6 +71,8 @@ const KNOWN_CODES = [
   { code: 'ABORTED', warn: true, desc: '调用方主动取消；绝不应重试' },
   { code: 'UNKNOWN', warn: true, desc: '非 LlmError 的通用兜底；勾选=广撒网' },
 ]
+
+const KNOWN_CODE_SET = new Set(KNOWN_CODES.map((k) => k.code))
 
 const L = {
   title: 'LLM 自动重试',
@@ -231,8 +234,7 @@ function NumberField({ label, hint, value, min, max, step, disabled, dirty, onCh
 
 function CodeChips({ selected, disabled, onToggle, onClear }) {
   const selSet = new Set(selected)
-  const known = KNOWN_CODES.map((k) => k.code)
-  const custom = selected.filter((c) => !known.includes(c))
+  const custom = selected.filter((c) => !KNOWN_CODE_SET.has(c))
   return (
     <div className="dlr-chipsWrap">
       <div className="dlr-chips">
@@ -273,15 +275,18 @@ function CodeChips({ selected, disabled, onToggle, onClear }) {
   )
 }
 
+const numOr = (v, d) => (typeof v === 'number' ? v : d)
+const normCodes = (v) => (Array.isArray(v) ? v : []).filter((c) => typeof c === 'string' && c.length > 0)
+
 function projectValue(value) {
   return {
-    enabled: value.enabled !== false,
-    maxRetries: typeof value.maxRetries === 'number' ? value.maxRetries : DEFAULTS.maxRetries,
-    initialDelayMs: typeof value.initialDelayMs === 'number' ? value.initialDelayMs : DEFAULTS.initialDelayMs,
-    maxDelayMs: typeof value.maxDelayMs === 'number' ? value.maxDelayMs : DEFAULTS.maxDelayMs,
-    jitterRatio: typeof value.jitterRatio === 'number' ? value.jitterRatio : DEFAULTS.jitterRatio,
-    retryableCodes: (Array.isArray(value.retryableCodes) ? value.retryableCodes : [])
-      .filter((c) => typeof c === 'string' && c.length > 0),
+    // enabled 用严格真值判定，与宿主默认 false 对齐（旧写法 !== false 会把缺字段当开启）
+    enabled: value.enabled === true,
+    maxRetries: numOr(value.maxRetries, DEFAULTS.maxRetries),
+    initialDelayMs: numOr(value.initialDelayMs, DEFAULTS.initialDelayMs),
+    maxDelayMs: numOr(value.maxDelayMs, DEFAULTS.maxDelayMs),
+    jitterRatio: numOr(value.jitterRatio, DEFAULTS.jitterRatio),
+    retryableCodes: normCodes(value.retryableCodes),
   }
 }
 

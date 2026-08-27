@@ -32,7 +32,7 @@
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "build": "bash scripts/build.sh",
+    "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   }
 }

@@ -30,22 +30,7 @@ declare module '@deepseek-ai/schemastery' {
     boolean(): Schema<boolean>
     number(): Schema<number>
     string(): Schema<string>
+    array(item: Schema | any): any
   }
   export default z
-}
-
-declare module '@deepseek-ai/dsh-settings' {
-  export type SettingsNamespace = string & { readonly __settingsNamespace: true }
-  export function settingsNamespace(value: string): SettingsNamespace
-  export function installSettingsSection(
-    ctx: any,
-    ns: SettingsNamespace,
-    schema: any,
-    entry: any,
-    hooks: {
-      setSource: (fn: () => any) => void
-      onChange: () => void
-      validate?: (value: any) => void
-    },
-  ): void
 }

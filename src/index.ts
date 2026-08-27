@@ -17,58 +17,86 @@ export const inject = ['settings']
 
 const NS = 'dsh-llm-retry'
 
+/** 默认补充码：400 reasoning_text（INVALID_REQUEST，OpenAI thinking 模式冲突）与
+ *  pi-ai 兜底错误（PI_AI_ERROR，覆盖 STREAM_ERROR 等流式失败）。 */
+const DEFAULT_RETRYABLE_CODES = ['INVALID_REQUEST', 'PI_AI_ERROR']
+
+/** 全部默认值——schema default、归一化兜底两处共用的唯一事实源（客户端卡片另有镜像）。 */
+export const DEFAULTS = {
+  enabled: false,
+  maxRetries: 2,
+  initialDelayMs: 500,
+  maxDelayMs: 10000,
+  jitterRatio: 0.1,
+  retryableCodes: [...DEFAULT_RETRYABLE_CODES],
+} as const
+
 export interface Config {
   enabled: boolean
   maxRetries: number
   initialDelayMs: number
   maxDelayMs: number
   jitterRatio: number
-  /** 补充到重试码列表的额外 code,与 provider 默认值合并(不去重覆盖)。空数组=不补充。 */
+  /** 补充到重试码列表的额外 code，与 provider 默认值取并集（不覆盖）。空数组=不补充。 */
   retryableCodes: string[]
 }
 
 export const Config = z.object({
-  enabled: z.boolean().default(false),
-  maxRetries: z.number().step(1).min(0).default(2),
-  initialDelayMs: z.number().min(1).default(500),
-  maxDelayMs: z.number().min(1).default(10000),
-  jitterRatio: z.number().min(0).max(1).default(0.1),
-  // 内置默认补充码：400 reasoning_text（INVALID_REQUEST）与 pi-ai 兜底错误
-  // （PI_AI_ERROR，覆盖 STREAM_ERROR 等流式失败）。开启 enabled 即自动拦截重试，
-  // 用户可在设置卡片追加/清空。
-  retryableCodes: z.array(z.string()).default(['INVALID_REQUEST', 'PI_AI_ERROR']),
+  enabled: z.boolean().default(DEFAULTS.enabled),
+  maxRetries: z.number().step(1).min(0).default(DEFAULTS.maxRetries),
+  initialDelayMs: z.number().min(1).default(DEFAULTS.initialDelayMs),
+  maxDelayMs: z.number().min(1).default(DEFAULTS.maxDelayMs),
+  jitterRatio: z.number().min(0).max(1).default(DEFAULTS.jitterRatio),
+  retryableCodes: z.array(z.string()).default([...DEFAULT_RETRYABLE_CODES]),
 })
 
-function resolveConfig(config: Partial<Config> | undefined): Config {
-  const rc = config?.retryableCodes
-  return {
-    enabled: config?.enabled ?? false,
-    maxRetries: Math.max(0, Math.floor(config?.maxRetries ?? 2)),
-    initialDelayMs: Math.max(1, Math.floor(config?.initialDelayMs ?? 500)),
-    maxDelayMs: Math.max(1, Math.floor(config?.maxDelayMs ?? 10000)),
-    jitterRatio: Math.min(1, Math.max(0, config?.jitterRatio ?? 0.1)),
-    retryableCodes: Array.isArray(rc) ? rc.filter((c) => typeof c === 'string' && c.length > 0) : ['INVALID_REQUEST', 'PI_AI_ERROR'],
+// —— 归一化：schema 之外的第二道防线（settings base 传入的是未校验裸值）——
+
+const normCodes = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((c): c is string => typeof c === 'string' && c.length > 0) : []
+
+/** 字段收敛器：类型不符返回 undefined，由调用方决定回退到现值还是默认值。 */
+const asBool = (v: unknown): boolean | undefined => (typeof v === 'boolean' ? v : undefined)
+const asInt = (v: unknown, min: number): number | undefined =>
+  typeof v === 'number' && Number.isFinite(v) ? Math.max(min, Math.floor(v)) : undefined
+const asFloat = (v: unknown, min: number, max: number): number | undefined =>
+  typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : undefined
+
+/** 裸值收敛成合法 Config：越界夹紧、类型不符回退默认、非法码过滤、退避下限封顶。 */
+function normalizeConfig(raw: Partial<Config> | undefined | null): Config {
+  const cfg: Config = {
+    enabled: asBool(raw?.enabled) ?? DEFAULTS.enabled,
+    maxRetries: asInt(raw?.maxRetries, 0) ?? DEFAULTS.maxRetries,
+    initialDelayMs: asInt(raw?.initialDelayMs, 1) ?? DEFAULTS.initialDelayMs,
+    maxDelayMs: asInt(raw?.maxDelayMs, 1) ?? DEFAULTS.maxDelayMs,
+    jitterRatio: asFloat(raw?.jitterRatio, 0, 1) ?? DEFAULTS.jitterRatio,
+    retryableCodes: Array.isArray(raw?.retryableCodes) ? normCodes(raw.retryableCodes) : [...DEFAULT_RETRYABLE_CODES],
   }
+  if (cfg.initialDelayMs > cfg.maxDelayMs) cfg.initialDelayMs = cfg.maxDelayMs
+  return cfg
 }
 
 export function apply(ctx: Context, config: Partial<Config> | undefined): void {
-  const live: Config = resolveConfig(config)
+  const live: Config = normalizeConfig(config)
 
+  // scope.watch 回调：字段级叠加——给出且类型合法的字段才覆盖，其余保留现值
   const syncFromScope = (next: Partial<Config> | undefined | null): void => {
     if (!next || typeof next !== 'object') return
-    if (typeof next.enabled === 'boolean') live.enabled = next.enabled
-    if (typeof next.maxRetries === 'number') live.maxRetries = Math.max(0, Math.floor(next.maxRetries))
-    if (typeof next.initialDelayMs === 'number') live.initialDelayMs = Math.max(1, Math.floor(next.initialDelayMs))
-    if (typeof next.maxDelayMs === 'number') live.maxDelayMs = Math.max(1, Math.floor(next.maxDelayMs))
-    if (typeof next.jitterRatio === 'number') live.jitterRatio = Math.min(1, Math.max(0, next.jitterRatio))
-    if (Array.isArray(next.retryableCodes)) {
-      live.retryableCodes = next.retryableCodes.filter((c: unknown) => typeof c === 'string' && c.length > 0) as string[]
-    }
-    if (live.initialDelayMs > live.maxDelayMs) live.initialDelayMs = live.maxDelayMs
+    Object.assign(
+      live,
+      normalizeConfig({
+        enabled: asBool(next.enabled) ?? live.enabled,
+        maxRetries: asInt(next.maxRetries, 0) ?? live.maxRetries,
+        initialDelayMs: asInt(next.initialDelayMs, 1) ?? live.initialDelayMs,
+        maxDelayMs: asInt(next.maxDelayMs, 1) ?? live.maxDelayMs,
+        jitterRatio: asFloat(next.jitterRatio, 0, 1) ?? live.jitterRatio,
+        retryableCodes: Array.isArray(next.retryableCodes) ? next.retryableCodes : live.retryableCodes,
+      }),
+    )
   }
 
-  // 与 dsh-thinking-compact 同款：ctx.inject(['settings']) + settings.register 直连。
-  // settings 服务可用后注册命名空间并开始 live 同步（scope.watch 即时回调）。
+  // 与 dsh-thinking-compact 同款：ctx.inject(['settings']) + settings.register 直连，
+  // 服务可用后注册命名空间并开始 live 同步（scope.watch 即时回调）。
   ctx.inject(['settings'], (sctx: any) => {
     try {
       const scope = sctx.settings.register(NS, Config, { base: config || {} })
@@ -86,6 +114,7 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
   })
 
   // prepend：抢在官方 llm-retry 之前改写 retryPolicy，官方 recover 直接消费覆盖值。
+  // retryableCodes 与 provider 默认值取并集（补充不覆盖），让 INVALID_REQUEST 等自定义码生效。
   ctx.on(
     'agent/request-error',
     (payload: { retryPolicy?: any } | undefined, next: (() => Promise<unknown>) | undefined) => {
