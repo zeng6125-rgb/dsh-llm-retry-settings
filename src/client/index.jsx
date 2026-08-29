@@ -91,7 +91,7 @@ const L = {
   fieldJitter: '抖动比例',
   fieldJitterHint: '0~1，给退避加随机抖动避免同时重试',
   groupCodes: '补充可重试的错误码',
-  fieldCodesHint: '勾选的码与 provider 内置列表取并集（不覆盖已有码）。琥珀色 = 重试通常无意义，慎选；STREAM_ERROR 流式失败归入 PI_AI_ERROR。列表外的码以虚线自定义 chip 出现。',
+  fieldCodesHint: '勾选的码与 provider 内置列表取并集（不覆盖已有码），已选中的码自动靠前。琥珀色 = 重试通常无意义，慎选；STREAM_ERROR 流式失败归入 PI_AI_ERROR。列表外的码以虚线自定义 chip 出现。',
   codesNone: '未勾选任何补充码——仅按 provider 内置码重试',
   codesCount: (n) => `将补充 ${n} 个错误码`,
   codesClear: '清空',
@@ -152,6 +152,7 @@ const CSS = [
   '.dlr-chip.warn{border-color:rgba(199,132,33,.45);color:var(--dsw-alias-state-warn,#c78421)}',
   '.dlr-chip.warn.on{background:var(--dsw-alias-state-warn,#c78421);border-color:var(--dsw-alias-state-warn,#c78421);color:#fff}',
   '.dlr-chip:disabled{opacity:.45;cursor:default}',
+  '.dlr-chipSep{width:1px;align-self:stretch;background:var(--dsw-alias-border-l2);margin:0 3px}',
   '.dlr-chipMeta{display:flex;align-items:center;gap:10px;color:var(--dsw-alias-label-caption);font-size:12px}',
   '.dlr-chipClear{height:auto;padding:0;border:none;background:transparent;color:var(--dsw-alias-state-danger,#d54545);font-size:12px;cursor:pointer}',
   '.dlr-chipClear:hover{text-decoration:underline}',
@@ -232,35 +233,44 @@ function NumberField({ label, hint, value, min, max, step, disabled, dirty, onCh
   )
 }
 
+function Chip({ code, title, warn, unknown, on, disabled, onClick }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      className={
+        'dlr-chip' + (warn ? ' warn' : '') + (unknown ? ' unknown' : '') + (on ? ' on' : '')
+      }
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {code}
+    </button>
+  )
+}
+
 function CodeChips({ selected, disabled, onToggle, onClear }) {
   const selSet = new Set(selected)
+  // 已选中的码自动靠前；组内仍按 KNOWN_CODES 的规范顺序，避免勾选后位置乱跳。
+  // 列表外的自定义码恒为选中态，紧跟其后；再后面才是未选中的码，中间加一道分隔线。
+  const picked = KNOWN_CODES.filter((k) => selSet.has(k.code))
+  const rest = KNOWN_CODES.filter((k) => !selSet.has(k.code))
   const custom = selected.filter((c) => !KNOWN_CODE_SET.has(c))
   return (
     <div className="dlr-chipsWrap">
       <div className="dlr-chips">
-        {KNOWN_CODES.map(({ code, desc, warn }) => (
-          <button
-            key={code}
-            type="button"
-            title={desc}
-            className={'dlr-chip' + (warn ? ' warn' : '') + (selSet.has(code) ? ' on' : '')}
-            disabled={disabled}
-            onClick={() => onToggle(code)}
-          >
-            {code}
-          </button>
+        {picked.map(({ code, desc, warn }) => (
+          <Chip key={code} code={code} title={desc} warn={warn} on disabled={disabled}
+            onClick={() => onToggle(code)} />
         ))}
         {custom.map((code) => (
-          <button
-            key={code}
-            type="button"
-            title="自定义错误码（provider 配置里手工加入的），点击取消勾选"
-            className="dlr-chip unknown on"
-            disabled={disabled}
-            onClick={() => onToggle(code)}
-          >
-            {code}
-          </button>
+          <Chip key={code} code={code} title="自定义错误码（provider 配置里手工加入的），点击取消勾选"
+            unknown on disabled={disabled} onClick={() => onToggle(code)} />
+        ))}
+        {picked.length + custom.length > 0 && rest.length > 0 && <span className="dlr-chipSep" />}
+        {rest.map(({ code, desc, warn }) => (
+          <Chip key={code} code={code} title={desc} warn={warn} disabled={disabled}
+            onClick={() => onToggle(code)} />
         ))}
       </div>
       <div className="dlr-chipMeta">
