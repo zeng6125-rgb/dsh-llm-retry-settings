@@ -9,6 +9,7 @@ A settings card for the DSH LLM auto-retry engine (`@deepseek-ai/dsh-llm-retry`)
 - **Includes the settings UI** (client bundle `lib/client.js`): a card in **Settings → General** — no separate UI package needed.
 - Overrides `maxRetries`, `initialDelayMs`, `maxDelayMs`, and `jitterRatio` on the `agent/request-error` retry policy.
 - **New in 0.1.3** — configurable `retryableCodes`: extra failure codes to retry on, **merged** into each provider's own list (never replaces it). Defaults to `INVALID_REQUEST` + `PI_AI_ERROR`, so OpenAI-style HTTP 400 errors (thinking-mode `reasoning_text`) and generic stream failures get retried out of the box.
+- **New in 0.1.5** — selected error codes float to the front of the chip list, with the unselected ones behind a divider; the order inside each group stays fixed, so chips never jump around when you toggle them.
 - Default `enabled: false` = fully bypassed; nothing changes until you enable the override.
 
 ## Install
@@ -18,12 +19,12 @@ Prerequisite: a DSH Desktop profile (the web profile lives at `~/.dsh/profiles/w
 ### Option A — GitHub Release package (recommended)
 
 ```bash
-# 1. download the packaged plugin tgz from the v0.1.4 release
-gh release download v0.1.4 -R zeng6125-rgb/dsh-llm-retry-settings
+# 1. download the packaged plugin tgz from the v0.1.5 release
+gh release download v0.1.5 -R zeng6125-rgb/dsh-llm-retry-settings
 
 # 2. unpack it into the profile's node_modules
 mkdir -p ~/.dsh/profiles/web/node_modules
-tar -xzf dsh-llm-retry-settings-0.1.4.tgz -C ~/.dsh/profiles/web/node_modules/
+tar -xzf dsh-llm-retry-settings-0.1.5.tgz -C ~/.dsh/profiles/web/node_modules/
 mv ~/.dsh/profiles/web/node_modules/package \
    ~/.dsh/profiles/web/node_modules/dsh-llm-retry-settings
 
@@ -41,7 +42,7 @@ The `dsh plugin` command forwards its arguments to `pnpm` in the profile directo
 dsh plugin --profile web add github:zeng6125-rgb/dsh-llm-retry-settings
 
 # or from the release tarball URL
-dsh plugin --profile web add https://github.com/zeng6125-rgb/dsh-llm-retry-settings/releases/download/v0.1.4/dsh-llm-retry-settings-0.1.4.tgz
+dsh plugin --profile web add https://github.com/zeng6125-rgb/dsh-llm-retry-settings/releases/download/v0.1.5/dsh-llm-retry-settings-0.1.5.tgz
 ```
 
 Then enable the plugin in the profile: add `"dsh-llm-retry-settings"` to `dsh.profile.bundles` (or use the Desktop plugin-inventory UI) and restart DSH.
