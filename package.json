@@ -1,6 +1,6 @@
 {
   "name": "dsh-llm-retry-settings",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "LLM 自动重试设置卡片：在 设置 → General 里修改重试次数（maxRetries）与退避时间（initialDelayMs/maxDelayMs/jitterRatio），并可勾选额外可重试错误码 retryableCodes（默认补入 INVALID_REQUEST，OpenAI thinking 模式 HTTP 400 报错自动重试），宿主 dsh-llm-retry 实时生效",
   "type": "module",
   "main": "lib/index.js",
@@ -17,6 +17,14 @@
   },
   "files": ["index.js", "lib", "cordis.patch.yml"],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zeng6125-rgb/dsh-llm-retry-settings.git"
+  },
+  "homepage": "https://github.com/zeng6125-rgb/dsh-llm-retry-settings",
+  "bugs": {
+    "url": "https://github.com/zeng6125-rgb/dsh-llm-retry-settings/issues"
+  },
   "dsh": {
     "client": {
       "inject": [],
