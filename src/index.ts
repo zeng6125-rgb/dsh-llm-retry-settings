@@ -25,7 +25,7 @@ import z from '@deepseek-ai/schemastery'
 export const name = 'dsh-llm-retry-settings'
 
 /** 诊断构建标记：写进 host.log，用来确认运行中的到底是哪一版 lib/index.js。 */
-const DIAG_TAG = 'v0.1.7-diag1'
+const DIAG_TAG = 'v0.1.7-diag2'
 
 /**
  * 文件诊断日志：`~/.dsh/logs/dsh-llm-retry-settings/host.log`。
@@ -373,11 +373,31 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
       diag(`bail via=${via}: agent.followup 不是函数（type=${typeof agent.followup}）`)
       return
     }
-    // 先投递再记账：followup 抛错时不该白占一个续写名额。
-    // JS 单线程，新回合的 turn/start 只会在本回调返回之后到达。
-    agent.followup(makeContinuationMessage())
+    // —— 关键：投递必须挪出本次 append 的调用栈 ——
+    //
+    // session/event 是在 Session.append() 内部**同步**派发的
+    // （dsh-session/lib/index.js:1462 → invokeContainedSessionObservers），
+    // 而 append 带重入保护：:1451 置 entry.appending=true，:1442 见已置位即抛
+    // "session append cannot reenter while another append is being published"。
+    // agent.followup() → send() → Inbox.splice() → Inbox.mutate()
+    // （dsh-agent/lib/index.js:148）做的第一件事就是
+    // session.append("agent/inbox/spliced")，所以在监听器里直接 followup 必然撞
+    // 上这个 guard——v0.1.7 首发版就是这么死的（host.log 2026-09-04T20:10:01Z 异常栈）。
+    //
+    // 微任务就够：appending 在 append 的 finally 里同步复位，微任务必然排在其后。
+    // 万一还卡在别的发布边界（如 announcing），退到宏任务再试一次——
+    // Inbox.mutate 是先 append 后改本地数组（:148 → :149），抛错即未入队，重试安全。
+    const deliver = (attempt: number): void => {
+      try {
+        agent.followup(makeContinuationMessage())
+        diag(`续写已投递 via=${via} attempt=${attempt} session=${session.id} turn=${turn} chain=${state.chain}/${cfg.maxContinuations}`)
+      } catch (error) {
+        diag(`续写投递失败 via=${via} attempt=${attempt} session=${session.id} turn=${turn}：${String(error)}`)
+        if (attempt === 1) setTimeout(() => deliver(2), 0)
+      }
+    }
     state.chain += 1
-    diag(`续写已投递 via=${via} session=${session.id} turn=${turn} chain=${state.chain}/${cfg.maxContinuations}`)
+    queueMicrotask(() => deliver(1))
   }
 
   ctx.on(
