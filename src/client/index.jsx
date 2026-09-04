@@ -46,15 +46,27 @@ const DEFAULTS = {
 // 已知错误码全集：核心 dsh-llm 规范码 + pi-ai/deepseek 两个适配器可能产出的全部
 // failure.code（扫自 node_modules 实际源码）。warn=true 的码重试基本无意义，
 // 仅特殊场景手动勾选；列表之外的码（provider 手工配置）以「自定义」虚线 chip 出现。
+// 刻意不列（在 agent/request-error 之前抛出，勾选也永远命中不了）：dsh-llm 注册期码
+// NO_ADAPTER / INVALID_ADAPTER / DUPLICATE_ADAPTER / INVALID_CATALOG / *_DIRECTORY /
+// *_DISCOVERY / INVALID_MODEL_* / INVALID_PREPARED_CALL / REGISTRATION_DISPOSED /
+// INVARIANT，以及凭证与发现期码 NO_CREDENTIAL_STORE / UNSTORABLE_PROVIDER_ID /
+// DISCOVERY_FAILED / DISCOVERY_UNSUPPORTED。
+// 同样不列 LLM_STREAM_IDLE_TIMEOUT / DEEPSEEK_FILES_API_TIMEOUT：它们只是 dsh-timeout
+// TimeoutReason 的 code，从不作为 failure.code 出现——卡流被适配器改写为
+// LlmError(..., "TIMEOUT")（pi-ai:1883、deepseek:1627），Files API 超时则回退 base64
+// 继续发请求（deepseek:1732），根本不报错。
+// 判据：只有 `new LlmError(msg, CODE)`（或 HarnessError.code）才算错误码，
+// TimeoutReason / 注册期抛出的码都不算。宿主升级后按此口径重新扫一遍即可。
 const KNOWN_CODES = [
   // —— 常用（瞬时故障，重试有恢复价值）——
   { code: 'RATE_LIMIT', desc: '429 限流' },
   { code: 'SERVER', desc: 'HTTP 5xx 服务端错误' },
-  { code: 'TIMEOUT', desc: '请求超时/流空闲超时' },
+  { code: 'TIMEOUT', desc: '请求超时：整次请求未在时限内返回；SSE 卡流（stream idle 看门狗）也以此码上报' },
   { code: 'TRANSPORT', desc: '网络中断、连接重置、流提前结束' },
   { code: 'EMPTY_RESPONSE', desc: '流正常结束但零内容块；重试安全' },
   { code: 'INVALID_REQUEST', desc: '400 类请求被拒（如 thinking 模式 reasoning_text 冲突、payload 超限）' },
   { code: 'PI_AI_ERROR', desc: 'pi-ai 兜底未知错误；STREAM_ERROR 流式失败归此类' },
+  { code: 'PI_AI_NOT_WARMED', desc: 'pi-ai 适配器尚未预热完成就被调用（启动竞态）；退避后重试通常能成' },
   { code: 'STREAM_CLOSED', desc: 'deepseek SSE 流未收到 [DONE] 就断开' },
   { code: 'MALFORMED_RESPONSE', desc: 'SSE 数据帧格式损坏' },
   { code: 'INVALID_RESPONSE', desc: '响应结构不符合预期（偶发可试）' },
@@ -70,6 +82,9 @@ const KNOWN_CODES = [
   { code: 'INVALID_REPLAY_STATE', warn: true, desc: 'pi-ai 重放状态损坏（内部管线错误）' },
   { code: 'ABORTED', warn: true, desc: '调用方主动取消；绝不应重试' },
   { code: 'UNKNOWN', warn: true, desc: '非 LlmError 的通用兜底；勾选=广撒网' },
+  { code: 'UNKNOWN_MODEL', warn: true, desc: '请求的模型不在目录；重试同样失败，应改模型选择' },
+  { code: 'UNSUPPORTED_OPTION', warn: true, desc: '适配器不支持该生成参数（如 stop）；改参数而非重试' },
+  { code: 'REQUEST_EXTENSION', warn: true, desc: 'deepseek 请求扩展（图片/搜索等）准备或受理失败（extension field 冲突等）；多为确定性错误' },
 ]
 
 const KNOWN_CODE_SET = new Set(KNOWN_CODES.map((k) => k.code))
@@ -91,7 +106,7 @@ const L = {
   fieldJitter: '抖动比例',
   fieldJitterHint: '0~1，给退避加随机抖动避免同时重试',
   groupCodes: '补充可重试的错误码',
-  fieldCodesHint: '勾选的码与 provider 内置列表取并集（不覆盖已有码），已选中的码自动靠前。琥珀色 = 重试通常无意义，慎选；STREAM_ERROR 流式失败归入 PI_AI_ERROR。列表外的码以虚线自定义 chip 出现。',
+  fieldCodesHint: '勾选的码与 provider 内置列表取并集（不覆盖已有码），已选中的码自动靠前。琥珀色 = 重试通常无意义，慎选；STREAM_ERROR 流式失败归入 PI_AI_ERROR，SSE 卡流归入 TIMEOUT。列表外的码以虚线自定义 chip 出现。',
   codesNone: '未勾选任何补充码——仅按 provider 内置码重试',
   codesCount: (n) => `将补充 ${n} 个错误码`,
   codesClear: '清空',
