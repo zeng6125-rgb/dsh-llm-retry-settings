@@ -41,11 +41,14 @@ const DEFAULTS = {
   maxDelayMs: 10000,
   jitterRatio: 0.1,
   retryableCodes: ['INVALID_REQUEST', 'PI_AI_ERROR'],
+  autoContinue: false,
+  maxContinuations: 2,
 }
 
 // 已知错误码全集：核心 dsh-llm 规范码 + pi-ai/deepseek 两个适配器可能产出的全部
-// failure.code（扫自 node_modules 实际源码）。warn=true 的码重试基本无意义，
-// 仅特殊场景手动勾选；列表之外的码（provider 手工配置）以「自定义」虚线 chip 出现。
+// failure.code（扫自 node_modules 实际源码）。每条带 cat 分类（见 CODE_CATEGORIES），
+// 客户端按组渲染；warn=true 的码重试基本无意义（琥珀色），仅特殊场景手动勾选；
+// 列表之外的码（provider 手工配置）以「自定义」虚线 chip 出现。
 // 刻意不列（在 agent/request-error 之前抛出，勾选也永远命中不了）：dsh-llm 注册期码
 // NO_ADAPTER / INVALID_ADAPTER / DUPLICATE_ADAPTER / INVALID_CATALOG / *_DIRECTORY /
 // *_DISCOVERY / INVALID_MODEL_* / INVALID_PREPARED_CALL / REGISTRATION_DISPOSED /
@@ -57,45 +60,62 @@ const DEFAULTS = {
 // 继续发请求（deepseek:1732），根本不报错。
 // 判据：只有 `new LlmError(msg, CODE)`（或 HarnessError.code）才算错误码，
 // TimeoutReason / 注册期抛出的码都不算。宿主升级后按此口径重新扫一遍即可。
+// 分类口径：按「重试有没有恢复价值」分六组，从上到下递减。
+// transient 组是官方默认列表覆盖的瞬时故障；warn=true 的码一律落在后面四组。
+const CODE_CATEGORIES = [
+  { id: 'transient', label: '瞬时故障', note: '重试通常能恢复' },
+  { id: 'quota', label: '限流与配额', note: '退避后可能恢复' },
+  { id: 'request', label: '请求与参数', note: '多为确定性错误' },
+  { id: 'content', label: '内容与能力', note: '模型不支持，重试无意义' },
+  { id: 'auth', label: '凭证与鉴权', note: '先修配置' },
+  { id: 'misc', label: '取消与兜底', note: '慎选' },
+]
+
 const KNOWN_CODES = [
-  // —— 常用（瞬时故障，重试有恢复价值）——
-  { code: 'RATE_LIMIT', desc: '429 限流' },
-  { code: 'SERVER', desc: 'HTTP 5xx 服务端错误' },
-  { code: 'TIMEOUT', desc: '请求超时：整次请求未在时限内返回；SSE 卡流（stream idle 看门狗）也以此码上报' },
-  { code: 'TRANSPORT', desc: '网络中断、连接重置、流提前结束' },
-  { code: 'EMPTY_RESPONSE', desc: '流正常结束但零内容块；重试安全' },
-  { code: 'INVALID_REQUEST', desc: '400 类请求被拒（如 thinking 模式 reasoning_text 冲突、payload 超限）' },
-  { code: 'PI_AI_ERROR', desc: 'pi-ai 兜底未知错误；STREAM_ERROR 流式失败归此类' },
-  { code: 'PI_AI_NOT_WARMED', desc: 'pi-ai 适配器尚未预热完成就被调用（启动竞态）；退避后重试通常能成' },
-  { code: 'STREAM_CLOSED', desc: 'deepseek SSE 流未收到 [DONE] 就断开' },
-  { code: 'MALFORMED_RESPONSE', desc: 'SSE 数据帧格式损坏' },
-  { code: 'INVALID_RESPONSE', desc: '响应结构不符合预期（偶发可试）' },
-  // —— 谨慎（重试通常无意义，琥珀色提示）——
-  { code: 'CONTEXT_WINDOW_EXCEEDED', warn: true, desc: '上下文超窗；重试同样失败，应压缩上下文' },
-  { code: 'QUOTA', warn: true, desc: '配额/余额耗尽（规范字面值就是 QUOTA）；重试无意义' },
-  { code: 'AUTH', warn: true, desc: '401/403 认证被拒；修密钥而非重试' },
-  { code: 'INVALID_CREDENTIAL', warn: true, desc: '凭证格式非法；修正存储值' },
-  { code: 'MISSING_CREDENTIAL', warn: true, desc: '缺少 API Key；先去模型页配置' },
-  { code: 'UNSUPPORTED_CONTENT', warn: true, desc: '该模型不支持此类内容（如图片）' },
-  { code: 'UNSUPPORTED_REASONING_EFFORT', warn: true, desc: '该模型不支持所选推理档位' },
-  { code: 'FILES_API', warn: true, desc: 'deepseek 文件服务 HTTP 失败' },
-  { code: 'INVALID_REPLAY_STATE', warn: true, desc: 'pi-ai 重放状态损坏（内部管线错误）' },
-  { code: 'ABORTED', warn: true, desc: '调用方主动取消；绝不应重试' },
-  { code: 'UNKNOWN', warn: true, desc: '非 LlmError 的通用兜底；勾选=广撒网' },
-  { code: 'UNKNOWN_MODEL', warn: true, desc: '请求的模型不在目录；重试同样失败，应改模型选择' },
-  { code: 'UNSUPPORTED_OPTION', warn: true, desc: '适配器不支持该生成参数（如 stop）；改参数而非重试' },
-  { code: 'REQUEST_EXTENSION', warn: true, desc: 'deepseek 请求扩展（图片/搜索等）准备或受理失败（extension field 冲突等）；多为确定性错误' },
+  // —— 瞬时故障 ——
+  { code: 'SERVER', cat: 'transient', desc: 'HTTP 5xx 服务端错误' },
+  { code: 'TIMEOUT', cat: 'transient', desc: '请求超时：整次请求未在时限内返回；SSE 卡流（stream idle 看门狗）也以此码上报' },
+  { code: 'TRANSPORT', cat: 'transient', desc: '网络中断、连接重置、流提前结束' },
+  { code: 'EMPTY_RESPONSE', cat: 'transient', desc: '流正常结束但零内容块；重试安全' },
+  { code: 'STREAM_CLOSED', cat: 'transient', desc: 'deepseek SSE 流未收到 [DONE] 就断开' },
+  { code: 'MALFORMED_RESPONSE', cat: 'transient', desc: 'SSE 数据帧格式损坏' },
+  { code: 'INVALID_RESPONSE', cat: 'transient', desc: '响应结构不符合预期（偶发可试）' },
+  { code: 'PI_AI_ERROR', cat: 'transient', desc: 'pi-ai 兜底未知错误；STREAM_ERROR 流式失败归此类' },
+  { code: 'PI_AI_NOT_WARMED', cat: 'transient', desc: 'pi-ai 适配器尚未预热完成就被调用（启动竞态）；退避后重试通常能成' },
+  // —— 限流与配额 ——
+  { code: 'RATE_LIMIT', cat: 'quota', desc: '429 限流' },
+  { code: 'QUOTA', cat: 'quota', warn: true, desc: '配额/余额耗尽（规范字面值就是 QUOTA）；重试无意义' },
+  // —— 请求与参数 ——
+  { code: 'INVALID_REQUEST', cat: 'request', desc: '400 类请求被拒（如 thinking 模式 reasoning_text 冲突、payload 超限）' },
+  { code: 'CONTEXT_WINDOW_EXCEEDED', cat: 'request', warn: true, desc: '上下文超窗；重试同样失败，应压缩上下文' },
+  { code: 'UNSUPPORTED_OPTION', cat: 'request', warn: true, desc: '适配器不支持该生成参数（如 stop）；改参数而非重试' },
+  { code: 'UNKNOWN_MODEL', cat: 'request', warn: true, desc: '请求的模型不在目录；重试同样失败，应改模型选择' },
+  { code: 'REQUEST_EXTENSION', cat: 'request', warn: true, desc: 'deepseek 请求扩展（图片/搜索等）准备或受理失败（extension field 冲突等）；多为确定性错误' },
+  { code: 'INVALID_REPLAY_STATE', cat: 'request', warn: true, desc: 'pi-ai 重放状态损坏（内部管线错误）' },
+  // —— 内容与能力 ——
+  { code: 'UNSUPPORTED_CONTENT', cat: 'content', warn: true, desc: '该模型不支持此类内容（如图片）' },
+  { code: 'UNSUPPORTED_REASONING_EFFORT', cat: 'content', warn: true, desc: '该模型不支持所选推理档位' },
+  { code: 'FILES_API', cat: 'content', warn: true, desc: 'deepseek 文件服务 HTTP 失败' },
+  // —— 凭证与鉴权 ——
+  { code: 'AUTH', cat: 'auth', warn: true, desc: '401/403 认证被拒；修密钥而非重试' },
+  { code: 'INVALID_CREDENTIAL', cat: 'auth', warn: true, desc: '凭证格式非法；修正存储值' },
+  { code: 'MISSING_CREDENTIAL', cat: 'auth', warn: true, desc: '缺少 API Key；先去模型页配置' },
+  // —— 取消与兜底 ——
+  { code: 'ABORTED', cat: 'misc', warn: true, desc: '调用方主动取消；绝不应重试' },
+  { code: 'UNKNOWN', cat: 'misc', warn: true, desc: '非 LlmError 的通用兜底；勾选=广撒网' },
 ]
 
 const KNOWN_CODE_SET = new Set(KNOWN_CODES.map((k) => k.code))
 
 const L = {
   title: 'LLM 自动重试',
-  desc: '模型请求失败时的自动恢复策略。开启后以本卡片值为准覆盖各 provider 的重试次数与退避时间。',
+  desc: '模型请求失败时的自动恢复策略，以及输出被 token 上限截断时的自动续写。开启重试后以本卡片值为准覆盖各 provider 的重试次数与退避时间。',
   badgeOn: '覆盖已开启',
   badgeOff: '未开启',
   statusOff: '沿用各 provider 自带的重试策略',
   statusOn: (n, init, max, j, c) => `最多重试 ${n} 次 · 退避 ${init}ms→${max}ms · 抖动 ${j} · 补充 ${c} 个错误码`,
+  continueOn: (n) => `截断自动续写 ≤${n} 次`,
+  continueOff: '截断不自动续写',
   groupBehavior: '重试行为',
   fieldRetries: '最大重试次数',
   fieldRetriesHint: '失败后最多重试几次；0 = 不重试',
@@ -106,10 +126,21 @@ const L = {
   fieldJitter: '抖动比例',
   fieldJitterHint: '0~1，给退避加随机抖动避免同时重试',
   groupCodes: '补充可重试的错误码',
-  fieldCodesHint: '勾选的码与 provider 内置列表取并集（不覆盖已有码），已选中的码自动靠前。琥珀色 = 重试通常无意义，慎选；STREAM_ERROR 流式失败归入 PI_AI_ERROR，SSE 卡流归入 TIMEOUT。列表外的码以虚线自定义 chip 出现。',
+  fieldCodesHint: '按“重试有没有恢复价值”分六组列出，组内已选中的码自动靠前并计数。勾选的码与 provider 内置列表取并集（不覆盖已有码）。琥珀色 = 重试通常无意义，慎选；STREAM_ERROR 流式失败归入 PI_AI_ERROR，SSE 卡流归入 TIMEOUT。provider 配置里手工加入、不在清单内的码会以虚线“自定义”组出现。',
   codesNone: '未勾选任何补充码——仅按 provider 内置码重试',
   codesCount: (n) => `将补充 ${n} 个错误码`,
   codesClear: '清空',
+  codesCustom: '自定义',
+  codesCustomHint: '不在已知清单内（provider 配置手工加的）',
+  groupContinue: '输出截断自动续写',
+  switchOn: '开启',
+  switchOff: '关闭',
+  continueHint: '回答被输出 token 上限截断时（宿主会显示「已达到输出 token 上限」），自动替你发一条「继续」，'
+    + '模型接着上文往下写。这不是请求失败，上面的重试策略管不到它；两者互不影响。',
+  continueWarn: '每次续写都会带着完整上下文再跑一轮，会额外消耗 token。',
+  continueZero: '次数为 0：开关虽开，实际不会补写任何一轮。',
+  fieldMaxContinue: '最多连续续写',
+  fieldMaxContinueHint: '同一次截断后连续补写的次数上限；模型正常说完或你重新发言即重新计数',
   suffixTimes: '次',
   suffixMs: 'ms',
   save: '保存',
@@ -141,8 +172,12 @@ const CSS = [
   '.dlr-knob{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .15s}',
   '.dlr-switch[aria-checked=true] .dlr-knob{transform:translateX(18px)}',
 
-  '.dlr-body{display:flex;flex-direction:column;gap:12px}',
+  '.dlr-body{display:flex;flex-direction:column;gap:16px}',
+  '.dlr-section{display:flex;flex-direction:column;gap:12px}',
   '.dlr-disabled{opacity:.55;pointer-events:none}',
+  '.dlr-switchRow{display:flex;align-items:flex-start;gap:10px}',
+  '.dlr-switchText{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}',
+  '.dlr-note{color:var(--dsw-alias-label-caption);font-size:12px;line-height:17px}',
   '.dlr-groupTitle{color:#14181d;color:light-dark(#14181d,#e2e7ec);font-size:13px;font-weight:600;letter-spacing:.4px}',
   '.dlr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}',
   '.dlr-cell{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;transition:border-color .12s}',
@@ -159,6 +194,10 @@ const CSS = [
   '.dlr-chipOuter{display:flex;flex-direction:column;gap:6px}',
   '.dlr-chipHint{color:var(--dsw-alias-label-caption);font-size:12px;line-height:17px}',
   '.dlr-chips{display:flex;flex-wrap:wrap;gap:6px}',
+  '.dlr-chipGroup{display:flex;flex-direction:column;gap:6px}',
+  '.dlr-chipGroupLabel{display:flex;align-items:baseline;gap:6px;color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:600}',
+  '.dlr-chipGroupLabel em{color:var(--dsw-alias-label-caption);font-size:11px;font-weight:400;font-style:normal}',
+  '.dlr-chipGroupLabel b{min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--dsw-alias-state-business-primary);color:#fff;font-size:10px;line-height:16px;text-align:center;font-weight:600}',
   '.dlr-chip{height:27px;padding:0 12px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;cursor:pointer;transition:all .12s;line-height:25px}',
   '.dlr-chip:hover:not(:disabled){border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-state-business-primary)}',
   '.dlr-chip.on{background:var(--dsw-alias-state-business-primary);border-color:var(--dsw-alias-state-business-primary);color:#fff}',
@@ -167,7 +206,6 @@ const CSS = [
   '.dlr-chip.warn{border-color:rgba(199,132,33,.45);color:var(--dsw-alias-state-warn,#c78421)}',
   '.dlr-chip.warn.on{background:var(--dsw-alias-state-warn,#c78421);border-color:var(--dsw-alias-state-warn,#c78421);color:#fff}',
   '.dlr-chip:disabled{opacity:.45;cursor:default}',
-  '.dlr-chipSep{width:1px;align-self:stretch;background:var(--dsw-alias-border-l2);margin:0 3px}',
   '.dlr-chipMeta{display:flex;align-items:center;gap:10px;color:var(--dsw-alias-label-caption);font-size:12px}',
   '.dlr-chipClear{height:auto;padding:0;border:none;background:transparent;color:var(--dsw-alias-state-danger,#d54545);font-size:12px;cursor:pointer}',
   '.dlr-chipClear:hover{text-decoration:underline}',
@@ -266,28 +304,48 @@ function Chip({ code, title, warn, unknown, on, disabled, onClick }) {
 
 function CodeChips({ selected, disabled, onToggle, onClear }) {
   const selSet = new Set(selected)
-  // 已选中的码自动靠前；组内仍按 KNOWN_CODES 的规范顺序，避免勾选后位置乱跳。
-  // 列表外的自定义码恒为选中态，紧跟其后；再后面才是未选中的码，中间加一道分隔线。
-  const picked = KNOWN_CODES.filter((k) => selSet.has(k.code))
-  const rest = KNOWN_CODES.filter((k) => !selSet.has(k.code))
   const custom = selected.filter((c) => !KNOWN_CODE_SET.has(c))
+  const chip = ({ code, desc, warn }) => (
+    <Chip key={code} code={code} title={desc} warn={warn} on={selSet.has(code)}
+      disabled={disabled} onClick={() => onToggle(code)} />
+  )
   return (
     <div className="dlr-chipsWrap">
-      <div className="dlr-chips">
-        {picked.map(({ code, desc, warn }) => (
-          <Chip key={code} code={code} title={desc} warn={warn} on disabled={disabled}
-            onClick={() => onToggle(code)} />
-        ))}
-        {custom.map((code) => (
-          <Chip key={code} code={code} title="自定义错误码（provider 配置里手工加入的），点击取消勾选"
-            unknown on disabled={disabled} onClick={() => onToggle(code)} />
-        ))}
-        {picked.length + custom.length > 0 && rest.length > 0 && <span className="dlr-chipSep" />}
-        {rest.map(({ code, desc, warn }) => (
-          <Chip key={code} code={code} title={desc} warn={warn} disabled={disabled}
-            onClick={() => onToggle(code)} />
-        ))}
-      </div>
+      {custom.length > 0 && (
+        <div className="dlr-chipGroup">
+          <span className="dlr-chipGroupLabel">
+            {L.codesCustom}
+            <em>{L.codesCustomHint}</em>
+          </span>
+          <div className="dlr-chips">
+            {custom.map((code) => (
+              <Chip key={code} code={code} title="自定义错误码（provider 配置里手工加入的），点击取消勾选"
+                unknown on disabled={disabled} onClick={() => onToggle(code)} />
+            ))}
+          </div>
+        </div>
+      )}
+      {CODE_CATEGORIES.map((cat) => {
+        const items = KNOWN_CODES.filter((k) => k.cat === cat.id)
+        if (items.length === 0) return null
+        // 组内仍是「已选靠前」+ 其余按 KNOWN_CODES 规范顺序（v0.1.5 行为），
+        // 分组只决定行归属，勾选不会让 chip 跳到别的组去。
+        const picked = items.filter((k) => selSet.has(k.code))
+        const others = items.filter((k) => !selSet.has(k.code))
+        return (
+          <div className="dlr-chipGroup" key={cat.id}>
+            <span className="dlr-chipGroupLabel">
+              {cat.label}
+              {cat.note ? <em>{cat.note}</em> : null}
+              {picked.length > 0 ? <b>{picked.length}</b> : null}
+            </span>
+            <div className="dlr-chips">
+              {picked.map(chip)}
+              {others.map(chip)}
+            </div>
+          </div>
+        )
+      })}
       <div className="dlr-chipMeta">
         <span>{selected.length === 0 ? L.codesNone : L.codesCount(selected.length)}</span>
         {selected.length > 0 && (
@@ -312,6 +370,8 @@ function projectValue(value) {
     maxDelayMs: numOr(value.maxDelayMs, DEFAULTS.maxDelayMs),
     jitterRatio: numOr(value.jitterRatio, DEFAULTS.jitterRatio),
     retryableCodes: normCodes(value.retryableCodes),
+    autoContinue: value.autoContinue === true,
+    maxContinuations: numOr(value.maxContinuations, DEFAULTS.maxContinuations),
   }
 }
 
@@ -368,9 +428,10 @@ function RetrySettingsRow({ useScope, scope }) {
   const revert = () => { setDraft(current); setSaveState(null) }
 
   const jPct = Math.round(draft.jitterRatio * 100) + '%'
-  const status = draft.enabled
+  const retryStatus = draft.enabled
     ? L.statusOn(draft.maxRetries, draft.initialDelayMs, draft.maxDelayMs, jPct, draft.retryableCodes.length)
     : L.statusOff
+  const status = retryStatus + ' · ' + (draft.autoContinue ? L.continueOn(draft.maxContinuations) : L.continueOff)
 
   return (
     <div className="dlr-card">
@@ -381,7 +442,7 @@ function RetrySettingsRow({ useScope, scope }) {
             <Badge on={draft.enabled} label={draft.enabled ? L.badgeOn : L.badgeOff} />
           </div>
           <span className="dlr-desc">{L.desc}</span>
-          <span className="dlr-status">{draft.enabled ? status : L.statusOff}</span>
+          <span className="dlr-status">{status}</span>
         </div>
         <Switch
           checked={draft.enabled}
@@ -392,36 +453,68 @@ function RetrySettingsRow({ useScope, scope }) {
         />
       </div>
 
-      <div className={'dlr-body' + (draft.enabled ? '' : ' dlr-disabled')}>
-        <span className="dlr-groupTitle">{L.groupBehavior}</span>
-        <div className="dlr-grid">
-          <NumberField label={L.fieldRetries} hint={L.fieldRetriesHint} value={draft.maxRetries}
-            min={0} step={1} suffix={L.suffixTimes}
-            disabled={!writable} dirty={draft.maxRetries !== current.maxRetries}
-            onChange={(n) => update('maxRetries', n)} onEnter={save} />
-          <NumberField label={L.fieldInitial} hint={L.fieldInitialHint} value={draft.initialDelayMs}
-            min={1} step={100} suffix={L.suffixMs}
-            disabled={!writable} dirty={draft.initialDelayMs !== current.initialDelayMs}
-            onChange={(n) => update('initialDelayMs', n)} onEnter={save} />
-          <NumberField label={L.fieldMax} hint={L.fieldMaxHint} value={draft.maxDelayMs}
-            min={1} step={500} suffix={L.suffixMs}
-            disabled={!writable} dirty={draft.maxDelayMs !== current.maxDelayMs}
-            onChange={(n) => update('maxDelayMs', n)} onEnter={save} />
-          <NumberField label={L.fieldJitter} hint={L.fieldJitterHint} value={draft.jitterRatio}
-            min={0} max={1} step={0.05} float suffix="%"
-            disabled={!writable} dirty={draft.jitterRatio !== current.jitterRatio}
-            onChange={(n) => update('jitterRatio', n)} onEnter={save} />
+      <div className="dlr-body">
+        <div className={'dlr-section' + (draft.enabled ? '' : ' dlr-disabled')}>
+          <span className="dlr-groupTitle">{L.groupBehavior}</span>
+          <div className="dlr-grid">
+            <NumberField label={L.fieldRetries} hint={L.fieldRetriesHint} value={draft.maxRetries}
+              min={0} step={1} suffix={L.suffixTimes}
+              disabled={!writable} dirty={draft.maxRetries !== current.maxRetries}
+              onChange={(n) => update('maxRetries', n)} onEnter={save} />
+            <NumberField label={L.fieldInitial} hint={L.fieldInitialHint} value={draft.initialDelayMs}
+              min={1} step={100} suffix={L.suffixMs}
+              disabled={!writable} dirty={draft.initialDelayMs !== current.initialDelayMs}
+              onChange={(n) => update('initialDelayMs', n)} onEnter={save} />
+            <NumberField label={L.fieldMax} hint={L.fieldMaxHint} value={draft.maxDelayMs}
+              min={1} step={500} suffix={L.suffixMs}
+              disabled={!writable} dirty={draft.maxDelayMs !== current.maxDelayMs}
+              onChange={(n) => update('maxDelayMs', n)} onEnter={save} />
+            <NumberField label={L.fieldJitter} hint={L.fieldJitterHint} value={draft.jitterRatio}
+              min={0} max={1} step={0.05} float suffix="%"
+              disabled={!writable} dirty={draft.jitterRatio !== current.jitterRatio}
+              onChange={(n) => update('jitterRatio', n)} onEnter={save} />
+          </div>
+
+          <span className="dlr-groupTitle">{L.groupCodes}</span>
+          <div className="dlr-chipOuter">
+            <CodeChips
+              selected={draft.retryableCodes}
+              disabled={!writable}
+              onToggle={toggleCode}
+              onClear={() => update('retryableCodes', [])}
+            />
+            <span className="dlr-chipHint">{L.fieldCodesHint}</span>
+          </div>
         </div>
 
-        <span className="dlr-groupTitle">{L.groupCodes}</span>
-        <div className="dlr-chipOuter">
-          <CodeChips
-            selected={draft.retryableCodes}
-            disabled={!writable}
-            onToggle={toggleCode}
-            onClear={() => update('retryableCodes', [])}
-          />
-          <span className="dlr-chipHint">{L.fieldCodesHint}</span>
+        {/* 自动续写与重试是两条独立通路：max-tokens 不是错误，重试策略永远碰不到它，
+            所以这里的开关不受上方 enabled 影响，也不随上方一起置灰。 */}
+        <div className="dlr-section">
+          <div className="dlr-switchRow">
+            <Switch
+              checked={draft.autoContinue}
+              disabled={!writable}
+              label={L.groupContinue}
+              title={draft.autoContinue ? L.switchOn : L.switchOff}
+              onClick={() => update('autoContinue', !draft.autoContinue)}
+            />
+            <div className="dlr-switchText">
+              <span className="dlr-groupTitle">{L.groupContinue}</span>
+              <span className="dlr-note">{L.continueHint}</span>
+            </div>
+          </div>
+          <div className={'dlr-section' + (draft.autoContinue ? '' : ' dlr-disabled')}>
+            <div className="dlr-grid">
+              <NumberField label={L.fieldMaxContinue} hint={L.fieldMaxContinueHint} value={draft.maxContinuations}
+                min={0} step={1} suffix={L.suffixTimes}
+                disabled={!writable} dirty={draft.maxContinuations !== current.maxContinuations}
+                onChange={(n) => update('maxContinuations', n)} onEnter={save} />
+            </div>
+            {draft.autoContinue && draft.maxContinuations === 0 && (
+              <span className="dlr-note">{L.continueZero}</span>
+            )}
+            {draft.autoContinue && <span className="dlr-note">{L.continueWarn}</span>}
+          </div>
         </div>
       </div>
 
