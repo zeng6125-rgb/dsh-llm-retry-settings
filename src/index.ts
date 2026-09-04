@@ -10,13 +10,61 @@
  * 3. autoContinue=true 时监听 `session/event` 的 `turn/end`，凡 reason.kind ===
  *    'max-tokens'（输出 token 上限截断）就替用户 `agent.followup()` 补一轮续写，
  *    每个会话最多连续 maxContinuations 次。默认关闭。
+ *    `agent/status`→idle 是同事件的兜底触发（回看 session.log 取原因），两条路径
+ *    按回合号去重，不会双发。
+ * 4. 运行诊断写 ~/.dsh/logs/dsh-llm-retry-settings/host.log（低频事件，见 diag）。
  */
 
 import { randomUUID } from 'node:crypto'
+import { appendFileSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 
 export const name = 'dsh-llm-retry-settings'
+
+/** 诊断构建标记：写进 host.log，用来确认运行中的到底是哪一版 lib/index.js。 */
+const DIAG_TAG = 'v0.1.7-diag1'
+
+/**
+ * 文件诊断日志：`~/.dsh/logs/dsh-llm-retry-settings/host.log`。
+ *
+ * 为什么不用 ctx.logger：本机 desktop.log 只捕获 agent 进程的 console.* 输出
+ * （对照 dsh-session-persistence-jsonl 的 `console.error('[dsh-append-guard] …')`），
+ * ctx.logger 的 warn/info 不落任何可读文件，排查时等于黑盒——自动续写不生效时
+ * 既看不出监听器有没有收到事件，也看不出在哪一步 bail。dsh-model-picker、
+ * dsh-vision-router 等第三方插件同样自己往 ~/.dsh/logs/<name>/ 写。
+ *
+ * 只记低频事件（激活、配置同步、turn/end、续写投递、各类 bail、异常）。
+ * 超过 256 KB 重写一次；任何写盘失败都被吞掉——诊断日志不能拖垮插件本体。
+ */
+const DIAG_MAX_BYTES = 256 * 1024
+let diagDir: string | undefined
+function diag(message: string): void {
+  try {
+    if (!diagDir) {
+      const home = process.env.DSH_HOME && process.env.DSH_HOME.trim() !== ''
+        ? process.env.DSH_HOME.trim()
+        : join(homedir(), '.dsh')
+      diagDir = join(home, 'logs', 'dsh-llm-retry-settings')
+      mkdirSync(diagDir, { recursive: true })
+    }
+    const file = join(diagDir, 'host.log')
+    const line = `${new Date().toISOString()} ${message}\n`
+    try {
+      if (statSync(file).size > DIAG_MAX_BYTES) {
+        writeFileSync(file, line)
+        return
+      }
+    } catch {
+      /* 文件还不存在：走追加 */
+    }
+    appendFileSync(file, line)
+  } catch {
+    /* 诊断失败静默 */
+  }
+}
 // agents：取 session 对应的 Agent 实例下 followup；sessions：接收 session/event 流。
 export const inject = ['settings', 'agents', 'sessions']
 
@@ -101,10 +149,34 @@ function normalizeConfig(raw: Partial<Config> | undefined | null): Config {
 interface ContinueState {
   /** 本轮截断链上已经补了几次续写。 */
   chain: number
-  /** 已 followup 但尚未被 loop 认领（防同一次截断叠加两条）。 */
-  pending: boolean
   /** 已因触顶拒绝过（只提示一次，不刷屏）。 */
   capped: boolean
+  /** 已处理过的 turn/end 回合号：session/event 与 agent/status 两条触发路径共用，
+   *  保证同一次截断最多续写一轮。回合号单调递增，所以它同时就是“上一次已投递”
+   *  的标记——不需要额外的 pending 标志（那玩意在只走兜底路径时会永久卡死：
+   *  清它的 turn/start 事件同样收不到）。 */
+  lastTurn: number
+}
+
+/**
+ * 从会话日志尾部找最近一条 `turn/end`。
+ *
+ * 只给 agent/status 兜底路径用：该钩子不带原因，得自己回看日志。最多回看
+ * 400 条事件——turn/end 之后紧跟的事件寥寥，再多就说明这个会话不正常，
+ * 宁可不续写也不做全量扫描。
+ */
+function lastTurnEnd(session: any): { turn: number; kind: string } | undefined {
+  const log = session?.log
+  if (!Array.isArray(log)) return undefined
+  for (let i = log.length - 1, floor = Math.max(-1, log.length - 400); i > floor; i -= 1) {
+    const event = log[i]
+    if (event?.type !== 'turn/end') continue
+    return {
+      turn: typeof event.data?.turn === 'number' ? event.data.turn : -1,
+      kind: typeof event.data?.reason?.kind === 'string' ? event.data.reason.kind : '',
+    }
+  }
+  return undefined
 }
 
 /**
@@ -127,6 +199,23 @@ function makeContinuationMessage(): unknown {
 
 export function apply(ctx: Context, config: Partial<Config> | undefined): void {
   const live: Config = normalizeConfig(config)
+  diag(`activate ${DIAG_TAG} inject=[${inject.join(',')}] pid=${process.pid} raw=${JSON.stringify(config ?? null)} live=${JSON.stringify(live)}`)
+
+  /** settings scope 句柄；服务未就绪时为 undefined。事件时刻用它重读现值，
+   *  这样即使 scope.watch 因任何原因没回调，配置也不会停留在激活时的旧值。 */
+  let scopeRef: { get: () => Partial<Config> } | undefined
+
+  /** 事件/请求时刻的有效配置：优先直接问 settings，失败退回 live 快照。 */
+  const current = (): Config => {
+    if (scopeRef) {
+      try {
+        syncFromScope(scopeRef.get())
+      } catch (error) {
+        diag(`scope.get 失败，沿用 live：${String(error)}`)
+      }
+    }
+    return live
+  }
 
   // scope.watch 回调：字段级叠加——给出且类型合法的字段才覆盖，其余保留现值
   const syncFromScope = (next: Partial<Config> | undefined | null): void => {
@@ -150,16 +239,25 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
   // 服务可用后注册命名空间并开始 live 同步（scope.watch 即时回调）。
   ctx.inject(['settings'], (sctx: any) => {
     try {
+      if (!sctx?.settings || typeof sctx.settings.register !== 'function') {
+        diag('settings 服务缺少 register，跳过命名空间注册')
+        return
+      }
       const scope = sctx.settings.register(NS, Config, { base: config || {} })
+      scopeRef = scope
       syncFromScope(scope.get())
-      scope.watch(() => {
+      diag(`settings registered; resolved=${JSON.stringify(scope.get())}`)
+      scope.watch((next: Partial<Config> | undefined) => {
         try {
-          syncFromScope(scope.get())
+          syncFromScope(next ?? scope.get())
+          diag(`settings sync: autoContinue=${live.autoContinue} maxContinuations=${live.maxContinuations} enabled=${live.enabled}`)
         } catch (error) {
+          diag(`settings sync 失败：${String(error)}`)
           ctx.logger.warn('[dsh-llm-retry-settings] 设置同步失败', error)
         }
       })
     } catch (error) {
+      diag(`settings register 失败：${String(error)}`)
       ctx.logger.warn('[dsh-llm-retry-settings] settings 注册失败', error)
     }
   })
@@ -168,19 +266,26 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
   // retryableCodes 与 provider 默认值取并集（补充不覆盖），让 INVALID_REQUEST 等自定义码生效。
   ctx.on(
     'agent/request-error',
-    (payload: { retryPolicy?: any } | undefined, next: (() => Promise<unknown>) | undefined) => {
-      if (live.enabled && payload && payload.retryPolicy && typeof payload.retryPolicy === 'object') {
+    (payload: { retryPolicy?: any; code?: string; failure?: { code?: string } } | undefined, next: (() => Promise<unknown>) | undefined) => {
+      // 事件时刻重读：不依赖 scope.watch 是否回调过（v0.1.7 首发版曾因配置停留在
+      // 激活时的旧值而整条链路静默失效，这里连同自动续写一起改成 pull 式）。
+      const cfg = current()
+      // 诊断锚点：agent/* 钩子能不能到达本插件（本插件的核心功能全靠它）。
+      // 若 host.log 里只见这条不见 turn/end 那条，说明 session/event 派发不到我们；
+      // 两条都没有则是整个 agent/* 链路的问题（重试覆盖同样失效）。
+      diag(`request-error enabled=${cfg.enabled} code=${payload?.code ?? payload?.failure?.code ?? '(n/a)'} keys=${Object.keys(payload ?? {}).join('|')}`)
+      if (cfg.enabled && payload && payload.retryPolicy && typeof payload.retryPolicy === 'object') {
         const p = payload.retryPolicy
-        const mergedCodes = live.retryableCodes.length > 0
-          ? [...new Set([...(p.retryableCodes ?? []), ...live.retryableCodes])]
+        const mergedCodes = cfg.retryableCodes.length > 0
+          ? [...new Set([...(p.retryableCodes ?? []), ...cfg.retryableCodes])]
           : p.retryableCodes
         payload.retryPolicy = {
           ...p,
-          ...(p.mode === 'normal' ? { maxRetries: live.maxRetries } : {}),
+          ...(p.mode === 'normal' ? { maxRetries: cfg.maxRetries } : {}),
           ...(mergedCodes ? { retryableCodes: mergedCodes } : {}),
-          initialDelayMs: live.initialDelayMs,
-          maxDelayMs: live.maxDelayMs,
-          jitterRatio: live.jitterRatio,
+          initialDelayMs: cfg.initialDelayMs,
+          maxDelayMs: cfg.maxDelayMs,
+          jitterRatio: cfg.jitterRatio,
         }
       }
       return next ? next() : undefined
@@ -206,74 +311,127 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
   const stateOf = (id: string): ContinueState => {
     let state = states.get(id)
     if (!state) {
-      state = { chain: 0, pending: false, capped: false }
+      state = { chain: 0, capped: false, lastTurn: -1 }
       states.set(id, state)
     }
     return state
+  }
+
+  /**
+   * 一次 turn/end 的唯一处理入口，两条触发路径共用：
+   *  - `session/event`（主路径，带原因）
+   *  - `agent/status` → idle（兜底路径，回看 session.log 找原因）
+   * 兜底路径的存在理由：本插件是 profile 插件，而 session/event 的派发上下文是
+   * sessions 服务自己的 ctx（dsh-session/lib/index.js `emitCtx: this.ctx`）；
+   * agent/* 系列钩子则走 agent 的 carrier（`agent/request-error` 已验证可达）。
+   * 万一 session/event 到不了本插件，idle 这条还能补上，靠 lastTurn 去重不会双发。
+   */
+  const handleTurnEnd = (session: any, turn: number, kind: string, via: string, agentHint?: any): void => {
+    const cfg = current()
+    const state = stateOf(String(session.id))
+    if (state.lastTurn === turn) return
+    state.lastTurn = turn
+    if (kind !== 'max-tokens') {
+      state.chain = 0
+      state.capped = false
+      return
+    }
+    diag(`turn/end via=${via} session=${session.id} turn=${turn} autoContinue=${cfg.autoContinue} maxContinuations=${cfg.maxContinuations} chain=${state.chain}`)
+    if (!cfg.autoContinue) return
+    if (state.chain >= cfg.maxContinuations) {
+      if (!state.capped) {
+        state.capped = true
+        diag(`bail via=${via}: 连续续写触顶（${state.chain}/${cfg.maxContinuations}）session=${session.id}`)
+        ctx.logger.info(
+          `[dsh-llm-retry-settings] 会话 ${session.id} 连续续写已达上限（${cfg.maxContinuations} 次），停止自动续写`,
+        )
+      }
+      return
+    }
+    // agentHint：agent/status 兜底路径已经拿到实例，不必再问注册表，
+    // 也就不会被 ctx.agents 是否可用卡住。
+    let agent: any = agentHint
+    if (!agent) {
+      const agents: any = (ctx as any).agents
+      if (!agents || typeof agents.get !== 'function') {
+        diag(`bail via=${via}: ctx.agents 不可用（inject 未满足？）`)
+        return
+      }
+      agent = agents.get(session.id)
+      if (!agent) {
+        diag(`bail via=${via}: agents.get(${session.id}) 无实例`)
+        return
+      }
+    }
+    // 按 id 比对而非对象引用：resume/fork 之后 store 可能给出同 id 的另一个
+    // Session 实例，引用相等会误判成“不是同一个会话”而静默放弃。
+    if (agent.session?.id !== session.id) {
+      diag(`bail via=${via}: agent.session.id=${agent.session?.id} 与事件 session.id=${session.id} 不符`)
+      return
+    }
+    if (typeof agent.followup !== 'function') {
+      diag(`bail via=${via}: agent.followup 不是函数（type=${typeof agent.followup}）`)
+      return
+    }
+    // 先投递再记账：followup 抛错时不该白占一个续写名额。
+    // JS 单线程，新回合的 turn/start 只会在本回调返回之后到达。
+    agent.followup(makeContinuationMessage())
+    state.chain += 1
+    diag(`续写已投递 via=${via} session=${session.id} turn=${turn} chain=${state.chain}/${cfg.maxContinuations}`)
   }
 
   ctx.on(
     'session/event',
     (session: any, event: any) => {
       try {
-        if (!live.autoContinue || !session || !event || typeof event.type !== 'string') return
-        const state = stateOf(String(session.id))
+        if (!session || !event || typeof event.type !== 'string') return
         switch (event.type) {
-          case 'turn/start':
-            // 新一轮已开跑：我们的排队意图不再“待认领”。若 followup 被取消丢弃，
-            // 不清这个标志会永久卡住该会话的续写能力。
-            state.pending = false
-            return
           case 'user/message': {
+            const state = stateOf(String(session.id))
             const source = event.data && event.data.source
             const kind = source && source.kind
             // 真人重新发言 = 旧截断链作废，计数归零
             if (kind === 'user') {
+              if (state.chain > 0) diag(`人工发言，重置续写链 session=${session.id} chain=${state.chain}`)
               state.chain = 0
-              state.pending = false
               state.capped = false
               return
             }
-            if (kind === 'plugin' && source.plugin === NS) state.pending = false
+            if (kind === 'plugin' && source.plugin === NS) {
+              diag(`续写消息已入会话 session=${session.id}`)
+            }
             return
           }
           case 'turn/end': {
             const reason = event.data && event.data.reason
             if (!reason || typeof reason.kind !== 'string') return
-            if (reason.kind !== 'max-tokens') {
-              state.chain = 0
-              state.pending = false
-              state.capped = false
-              return
-            }
-            if (state.pending) return
-            if (state.chain >= live.maxContinuations) {
-              if (!state.capped) {
-                state.capped = true
-                ctx.logger.info(
-                  `[dsh-llm-retry-settings] 会话 ${session.id} 连续续写已达上限（${live.maxContinuations} 次），停止自动续写`,
-                )
-              }
-              return
-            }
-            const agents: any = (ctx as any).agents
-            const agent = agents && typeof agents.get === 'function' ? agents.get(session.id) : undefined
-            if (!agent || agent.session !== session || typeof agent.followup !== 'function') return
-            // 先投递再记账：followup 抛错时不该白占一个续写名额。
-            // JS 单线程，新回合的 turn/start 只会在本回调返回之后到达。
-            agent.followup(makeContinuationMessage())
-            state.chain += 1
-            state.pending = true
+            handleTurnEnd(session, typeof event.data.turn === 'number' ? event.data.turn : -1, reason.kind, 'session/event')
             return
           }
           default:
             return
         }
       } catch (error) {
+        diag(`自动续写处理异常（session/event）：${error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error)}`)
         ctx.logger.warn('[dsh-llm-retry-settings] 自动续写处理失败', error)
       }
     },
   )
+
+  // 兜底触发：回合结束且没有后续工作时 agent 转 idle，此时 turn/end 已落日志。
+  // 若主路径（session/event）正常，lastTurn 去重会让这里直接 return。
+  ctx.on('agent/status', (payload: any) => {
+    try {
+      if (!payload || payload.status !== 'idle') return
+      const session = payload.agent?.session
+      if (!session || session.id === undefined) return
+      const end = lastTurnEnd(session)
+      if (!end) return
+      handleTurnEnd(session, end.turn, end.kind, 'agent/status', payload.agent)
+    } catch (error) {
+      diag(`自动续写处理异常（agent/status）：${String(error)}`)
+    }
+  })
 
   // 会话离场即清账本，避免长跑进程里 Map 无界增长
   ctx.on('session/disposed', (session: any) => {
