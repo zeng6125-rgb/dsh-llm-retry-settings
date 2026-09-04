@@ -138,6 +138,7 @@ const L = {
   continueHint: '回答被输出 token 上限截断时（宿主会显示「已达到输出 token 上限」），自动替你发一条「继续」，'
     + '模型接着上文往下写。这不是请求失败，上面的重试策略管不到它；两者互不影响。',
   continueWarn: '每次续写都会带着完整上下文再跑一轮，会额外消耗 token。',
+  continueLog: '宿主半边把关键决策写进 ~/.dsh/logs/dsh-llm-retry-settings/host.log，没自动续写时先看它。',
   continueZero: '次数为 0：开关虽开，实际不会补写任何一轮。',
   fieldMaxContinue: '最多连续续写',
   fieldMaxContinueHint: '同一次截断后连续补写的次数上限；模型正常说完或你重新发言即重新计数',
@@ -514,6 +515,7 @@ function RetrySettingsRow({ useScope, scope }) {
               <span className="dlr-note">{L.continueZero}</span>
             )}
             {draft.autoContinue && <span className="dlr-note">{L.continueWarn}</span>}
+          {draft.autoContinue && <span className="dlr-note">{L.continueLog}</span>}
           </div>
         </div>
       </div>

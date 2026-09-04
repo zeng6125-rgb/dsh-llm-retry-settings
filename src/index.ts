@@ -26,7 +26,7 @@ import z from '@deepseek-ai/schemastery'
 export const name = 'dsh-llm-retry-settings'
 
 /** 诊断构建标记：写进 host.log，用来确认运行中的到底是哪一版 lib/index.js。 */
-const DIAG_TAG = 'v0.1.7-diag3'
+const DIAG_TAG = 'v0.1.8'
 
 /**
  * 文件诊断日志：`~/.dsh/logs/dsh-llm-retry-settings/host.log`。
@@ -66,6 +66,12 @@ function diag(message: string): void {
     /* 诊断失败静默 */
   }
 }
+
+/** 配置摘要：host.log 要能看出配置对不对，但不必塞进整段 JSON。 */
+const summaryOf = (cfg: Config): string =>
+  `enabled=${cfg.enabled} codes=${cfg.retryableCodes.length} maxRetries=${cfg.maxRetries}` +
+  ` backoff=${cfg.initialDelayMs}~${cfg.maxDelayMs}ms jitter=${cfg.jitterRatio}` +
+  ` autoContinue=${cfg.autoContinue} maxContinuations=${cfg.maxContinuations}`
 // agents：取 session 对应的 Agent 实例下 followup；sessions：接收 session/event 流。
 export const inject = ['settings', 'agents', 'sessions']
 
@@ -200,7 +206,7 @@ function makeContinuationMessage(): unknown {
 
 export function apply(ctx: Context, config: Partial<Config> | undefined): void {
   const live: Config = normalizeConfig(config)
-  diag(`activate ${DIAG_TAG} inject=[${inject.join(',')}] pid=${process.pid} raw=${JSON.stringify(config ?? null)} live=${JSON.stringify(live)}`)
+  diag(`activate ${DIAG_TAG} pid=${process.pid} inject=[${inject.join(',')}] ${summaryOf(live)}`)
 
   /** settings scope 句柄；服务未就绪时为 undefined。事件时刻用它重读现值，
    *  这样即使 scope.watch 因任何原因没回调，配置也不会停留在激活时的旧值。 */
@@ -247,7 +253,7 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
       const scope = sctx.settings.register(NS, Config, { base: config || {} })
       scopeRef = scope
       syncFromScope(scope.get())
-      diag(`settings registered; resolved=${JSON.stringify(scope.get())}`)
+      diag(`settings registered ${summaryOf(live)}`)
       scope.watch((next: Partial<Config> | undefined) => {
         try {
           syncFromScope(next ?? scope.get())
@@ -274,7 +280,7 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
       // 诊断锚点：agent/* 钩子能不能到达本插件（本插件的核心功能全靠它）。
       // 若 host.log 里只见这条不见 turn/end 那条，说明 session/event 派发不到我们；
       // 两条都没有则是整个 agent/* 链路的问题（重试覆盖同样失效）。
-      diag(`request-error enabled=${cfg.enabled} code=${payload?.code ?? payload?.failure?.code ?? '(n/a)'} keys=${Object.keys(payload ?? {}).join('|')}`)
+      diag(`request-error enabled=${cfg.enabled} code=${payload?.code ?? payload?.failure?.code ?? '(n/a)'}`)
       if (cfg.enabled && payload && payload.retryPolicy && typeof payload.retryPolicy === 'object') {
         const p = payload.retryPolicy
         const mergedCodes = cfg.retryableCodes.length > 0
@@ -467,6 +473,8 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
   ctx.on('agent/status', (payload: any) => {
     try {
       if (!payload || payload.status !== 'idle') return
+      // 关闭自动续写时不必回看日志：每次 idle 扫 400 条事件是白工
+      if (!current().autoContinue) return
       const session = payload.agent?.session
       if (!session || session.id === undefined) return
       const end = lastTurnEnd(session)

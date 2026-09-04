@@ -9,6 +9,8 @@ DSH「LLM 自动重试」设置卡片：在 **设置 → General** 里调整自�
 - **自带设置 UI**（客户端 bundle `lib/client.js`）：一张位于 **设置 → General** 的卡片，无需另外装 UI 包。
 - 覆盖 `agent/request-error` 重试策略中的 `maxRetries`、`initialDelayMs`、`maxDelayMs`、`jitterRatio`。
 - **0.1.3 新增** `retryableCodes`：可勾选的额外重试错误码，与各 provider 自带列表 **合并（去重）而非替换**。默认补入 `INVALID_REQUEST` + `PI_AI_ERROR`，开箱即重试 OpenAI 式 HTTP 400（thinking 模式 `reasoning_text`）与流式失败兜底码。
+- **0.1.8 修复** 自动续写现在真的会发出去了。宿主半边两道时机坑：`session/event` 是在 `Session.append` **内部**同步派发的，在监听器里直接排续写会撞 `session append cannot reenter while another append is being published`；绕开之后又发现此刻唤醒 agent 会被驱动静默丢弃（`wakeDriver` 只在 maintenance/abort 下才 latch），消息就永远卡在队列里。现在改成先 `await agent.whenIdle()` 再投递，投递前复核（已开新回合 / 你重新发言 / 会话已 dispose 则放弃）。
+- **0.1.8 新增** 宿主半边把每一步决策写进 `~/.dsh/logs/dsh-llm-retry-settings/host.log`（低频、256 KB 封顶），设置卡片上也标了这个路径。见 [排错](#排错)。
 - **0.1.7 新增** 重新按当前宿主核对错误码清单：补入 `PI_AI_NOT_WARMED`（适配器预热竞态，退避后重试通常能成）与三个琥珀色「重试无意义」码（`UNKNOWN_MODEL`、`UNSUPPORTED_OPTION`、`REQUEST_EXTENSION`）。同时澄清 `TIMEOUT`：SSE 卡流（stream idle 看门狗）就是以 `TIMEOUT` 上报，并没有独立错误码，宿主默认重试码表已覆盖。
 - **0.1.7 新增** **输出截断自动续写**（`autoContinue`，默认关闭）。撞到输出 token 上限**不是请求失败**——请求是成功返回的，只是 `finish = max-tokens`——所以任何重试策略都管不到它。开启后本插件监听 `turn/end`，每次截断补一轮续写，最多连续 `maxContinuations` 次（模型正常说完或你重新发言即重新计数）。
 - **0.1.7 新增** 错误码 chip 按「重试有没有恢复价值」分六组：瞬时故障 → 限流与配额 → 请求与参数 → 内容与能力 → 凭证与鉴权 → 取消与兜底，组标题上标出该组已选数量；已选中的码仍在**自己那一组内**靠前。
@@ -22,12 +24,12 @@ DSH「LLM 自动重试」设置卡片：在 **设置 → General** 里调整自�
 ### 方式 A —— GitHub Release 安装包（推荐）
 
 ```bash
-# 1. 从 v0.1.7 release 下载打包好的插件 tgz
-gh release download v0.1.7 -R zeng6125-rgb/dsh-llm-retry-settings
+# 1. 从 v0.1.8 release 下载打包好的插件 tgz
+gh release download v0.1.8 -R zeng6125-rgb/dsh-llm-retry-settings
 
 # 2. 解压进 profile 的 node_modules
 mkdir -p ~/.dsh/profiles/web/node_modules
-tar -xzf dsh-llm-retry-settings-0.1.7.tgz -C ~/.dsh/profiles/web/node_modules/
+tar -xzf dsh-llm-retry-settings-0.1.8.tgz -C ~/.dsh/profiles/web/node_modules/
 mv ~/.dsh/profiles/web/node_modules/package \
    ~/.dsh/profiles/web/node_modules/dsh-llm-retry-settings
 
@@ -44,7 +46,7 @@ mv ~/.dsh/profiles/web/node_modules/package \
 dsh plugin --profile web add github:zeng6125-rgb/dsh-llm-retry-settings
 
 # 或从 release tarball 地址安装
-dsh plugin --profile web add https://github.com/zeng6125-rgb/dsh-llm-retry-settings/releases/download/v0.1.7/dsh-llm-retry-settings-0.1.7.tgz
+dsh plugin --profile web add https://github.com/zeng6125-rgb/dsh-llm-retry-settings/releases/download/v0.1.8/dsh-llm-retry-settings-0.1.8.tgz
 ```
 
 装完还需要在 profile 里启用：把 `"dsh-llm-retry-settings"` 加进 `dsh.profile.bundles`（或使用 Desktop 的插件管理 UI），然后重启 DSH。
@@ -76,6 +78,22 @@ dsh plugin --profile web link "$PWD"
 5. 需要的话打开**输出截断自动续写**（`autoContinue`）并设置 `maxContinuations` 上限——它与上面的重试覆盖互不影响。
 
 改动会写入 `dsh-llm-retry` 设置命名空间，重试引擎实时生效。
+
+## 排错
+
+**回答被截断但没有自动续写。** 宿主半边会把每一步决策写进
+`~/.dsh/logs/dsh-llm-retry-settings/host.log`——一个事件一行，超过 256 KB 重写一次。
+桌面版的 `ctx.logger` 不落任何可读文件，所以这个日志是唯一的观察口。看最后几行：
+
+- 启动处没有 `activate v…` → 插件没被加载（查 profile 里的 `dsh.profile.bundles`）。
+- `activate v…` 会写明当前跑的是哪一版构建——不是你刚装的那版，就是没重启 agent。
+- `settings registered … autoContinue=false` → 开关没开。
+- 有 `turn/end …` 但后面没内容 → 那一刻 `autoContinue` 是关的，或 `maxContinuations` 是 `0`。
+- `bail …` → 原因在行里（该会话没有 agent 实例、`followup` 不可用……）。
+- `放弃投递 …` → 等 agent 空闲期间情况变了（开了新回合、你重新发言、会话被 dispose），这条过期续写按设计丢弃。
+- `续写已投递 … chain=N/M` → 已排队发出。`连续续写触顶` 表示到了 `maxContinuations` 上限；模型正常说完或你发一条消息即重新计数。
+
+**改宿主半边（`lib/index.js`）必须重启 DSH。** 客户端卡片刷新页面即可，agent 不会热重载。
 
 ## 配置项
 
