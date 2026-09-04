@@ -8,7 +8,8 @@
  *    额外 retryableCodes 与 provider 内置列表并集合并，次数/退避/抖动直接覆盖。
  *    enabled=false（默认）时完全旁路，不改任何东西。
  * 3. autoContinue=true 时监听 `session/event` 的 `turn/end`，凡 reason.kind ===
- *    'max-tokens'（输出 token 上限截断）就替用户 `agent.followup()` 补一轮续写，
+ *    'max-tokens'（输出 token 上限截断）就替用户补一轮续写：等 `agent.whenIdle()`
+ *    之后 `agent.followup()`（时机细节见 handleTurnEnd 注释），
  *    每个会话最多连续 maxContinuations 次。默认关闭。
  *    `agent/status`→idle 是同事件的兜底触发（回看 session.log 取原因），两条路径
  *    按回合号去重，不会双发。
@@ -25,7 +26,7 @@ import z from '@deepseek-ai/schemastery'
 export const name = 'dsh-llm-retry-settings'
 
 /** 诊断构建标记：写进 host.log，用来确认运行中的到底是哪一版 lib/index.js。 */
-const DIAG_TAG = 'v0.1.7-diag2'
+const DIAG_TAG = 'v0.1.7-diag3'
 
 /**
  * 文件诊断日志：`~/.dsh/logs/dsh-llm-retry-settings/host.log`。
@@ -373,31 +374,54 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
       diag(`bail via=${via}: agent.followup 不是函数（type=${typeof agent.followup}）`)
       return
     }
-    // —— 关键：投递必须挪出本次 append 的调用栈 ——
+    // —— 关键：必须等 agent 真正空闲后再投递 ——
     //
-    // session/event 是在 Session.append() 内部**同步**派发的
-    // （dsh-session/lib/index.js:1462 → invokeContainedSessionObservers），
-    // 而 append 带重入保护：:1451 置 entry.appending=true，:1442 见已置位即抛
-    // "session append cannot reenter while another append is being published"。
-    // agent.followup() → send() → Inbox.splice() → Inbox.mutate()
-    // （dsh-agent/lib/index.js:148）做的第一件事就是
-    // session.append("agent/inbox/spliced")，所以在监听器里直接 followup 必然撞
-    // 上这个 guard——v0.1.7 首发版就是这么死的（host.log 2026-09-04T20:10:01Z 异常栈）。
+    // 两道坑，v0.1.7 的两个版本各踩一道（host.log 全记下来了）：
     //
-    // 微任务就够：appending 在 append 的 finally 里同步复位，微任务必然排在其后。
-    // 万一还卡在别的发布边界（如 announcing），退到宏任务再试一次——
-    // Inbox.mutate 是先 append 后改本地数组（:148 → :149），抛错即未入队，重试安全。
-    const deliver = (attempt: number): void => {
-      try {
-        agent.followup(makeContinuationMessage())
-        diag(`续写已投递 via=${via} attempt=${attempt} session=${session.id} turn=${turn} chain=${state.chain}/${cfg.maxContinuations}`)
-      } catch (error) {
-        diag(`续写投递失败 via=${via} attempt=${attempt} session=${session.id} turn=${turn}：${String(error)}`)
-        if (attempt === 1) setTimeout(() => deliver(2), 0)
-      }
-    }
+    // (1) session/event 是在 Session.append() 内部**同步**派发的
+    //     （dsh-session/lib/index.js:1462 → invokeContainedSessionObservers），
+    //     而 append 有重入保护：:1451 置 entry.appending=true，:1442 见已置位即抛
+    //     "session append cannot reenter while another append is being published"。
+    //     followup → send → Inbox.splice → Inbox.mutate（dsh-agent/lib/index.js:148）
+    //     做的第一件事就是 session.append("agent/inbox/spliced")，
+    //     所以在监听器里同步 followup 必然自撞（diag1 版的死法）。
+    //
+    // (2) 挪进微任务之后死在第二道：turn/end 时驱动还在收尾，phase.kind 仍是
+    //     "running"，而 wakeDriver 只在 maintenance / wakeAfterAbort 时才 latch
+    //     wakeRequested（dsh-agent-loop/lib/index.js:458-462），否则直接 return
+    //     ——消息确实插进了 next-turn 队列，唤醒却被丢弃；kick() 收尾时
+    //     :502 的 `if (wakeRequested && this.inbox.hasPending) this.wakeDriver()`
+    //     因此不成立。表现就是「进了排队但永远发不出去」（diag2 版的死法）。
+    //
+    // 正解是官方给的 whenIdle()：`await this.activityDone` 直到驱动边界 settle
+    // （dsh-agent-loop/lib/index.js:474-479）。kick 的 finally 先 setPhase(idle)
+    // （:498）再 resolve driver，所以那时 phase 已是 idle，这一发
+    // send(wakeup=true) 才会真的开新驱动。
     state.chain += 1
-    queueMicrotask(() => deliver(1))
+    const expectedChain = state.chain
+    const sessionId = String(session.id)
+    const attempt = (round: number): void => {
+      void (async () => {
+        try {
+          if (typeof agent.whenIdle === 'function') await agent.whenIdle()
+          else await new Promise((resolve) => setTimeout(resolve, 0))
+          // 等待期间情况可能已经变了：跑了新回合、人工重新发言（chain 被重置）、
+          // 或会话已 dispose。任何一种都放弃，绝不补一发过期的续写。
+          if (state.lastTurn !== turn || state.chain !== expectedChain || !states.has(sessionId)) {
+            diag(`放弃投递 round=${round} via=${via} session=${sessionId} turn=${turn} lastTurn=${state.lastTurn} chain=${state.chain}`)
+            return
+          }
+          agent.followup(makeContinuationMessage())
+          diag(`续写已投递 round=${round} via=${via} session=${sessionId} turn=${turn} chain=${state.chain}/${cfg.maxContinuations}`)
+        } catch (error) {
+          diag(`续写投递失败 round=${round} via=${via} session=${sessionId} turn=${turn}：${String(error)}`)
+          // Inbox.mutate 是先 append 后改本地数组（:148 → :149），重入抛错即未入队，
+          // 只有这一种错误可以重试而不会双插。
+          if (round === 1 && String(error).includes('reenter')) setTimeout(() => attempt(2), 0)
+        }
+      })()
+    }
+    attempt(1)
   }
 
   ctx.on(
