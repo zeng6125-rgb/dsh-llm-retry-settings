@@ -31,7 +31,7 @@ const CSS_TAG = PLUGIN_ID + '/client.css'
 const ENTRY_ID = 'llm-retry-settings'
 const NS_KEYS = [NS, ENTRY_ID]
 
-import { useState, useCallback, useEffect, useSyncExternalStore, memo } from 'react'
+import { useState, useCallback, useEffect, useRef, useSyncExternalStore, memo } from 'react'
 
 // [rc.8 compat] dsh-client-web-react 移除了静态模块导出；
 // bindSnapshotSelector 本是 uSES selector bridge，这里用 useSyncExternalStore 内联等价实现。
@@ -1061,6 +1061,8 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
   const [saveState, setSaveState] = useState(null) // null | 'saving' | 'ok' | 'fail'
   const [addMsg, setAddMsg] = useState(null) // 自定义码输入反馈 null | {kind:'dup'|'bad', code}
   const [logMsg, setLogMsg] = useState(null) // 打开日志失败提示 null | 'nobridge'
+  /** 根节点引用：滚动优化要在挂载后沿祖先链找「真正在滚的那个容器」。 */
+  const cardRef = useRef(null)
 
   // 外部变更跟随（渲染期调整，无 effect 竞态）：快照变化时，草稿若仍是旧快照的
   // 原样（用户没改过）就跟随更新；用户改过则保留草稿（dirty）
@@ -1160,8 +1162,67 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
     : L.statusOff
   const status = retryStatus + ' · ' + (draft.autoContinue ? L.continueOn(draft.maxContinuations) : L.continueOff)
 
+  // ── 滚动流畅性（2026-10-04）────────────────────────────────────────────────
+  // 症状：本分区高 ~1977px，DSH 设置面板的滚动容器（.VOzbGW_options，clientH 915 /
+  //   scrollH 2026）**没有合成层提示** ⇒ 滚动时每帧都要重栅格化整块内容。
+  // 量具：真窗口 1600×1000 + `--force_low_power_gpu` + CDP 真实滚轮事件（165Hz，帧预算
+  //   6.06ms；无头走软渲染，数字不可信）。基线：静止 p50 6.1ms 满帧，滚动 p50 12.1~18.1ms /
+  //   p95 24.3ms / p99 30ms / max 79~152ms、**11~13 帧超 16.7ms**；程序化跳滚更差
+  //   （63/146 帧超预算，总时长 1866ms）。
+  // 修法：给「真正在滚的那个祖先」加 `will-change:scroll-position`（语义即「此容器会滚」，
+  //   不建无条件层、不改布局、视觉零差异）⇒ 实测 p50 6.1ms / p95 6.2ms / **0-of-410 帧
+  //   超预算**，总时长 1866ms → 604ms。
+  // 为什么用 JS 沿祖先找，而不是 CSS 结构选择器（如 `div:has(> div > .dlr-card)`）：
+  //   宿主槽位结构在 0.1.6→0.2.1 之间变过，结构选择器会**静默失效**；沿祖先只认
+  //   「overflow-y 可滚且内容溢出」这一事实，与层级、类名都无关。两种下发方式实测等价
+  //   （各 4 轮：超标 4/1795 帧 vs 1/1649 帧）。
+  // ★ 本分区已实测否掉、勿再加回来：
+  //   · `content-visibility:auto` —— 本分区列表太短，行级 74~91 帧超标、子块级 85 帧；
+  //   · 删掉 .dlr-card 的 `contain:layout paint` —— 15 → 47~58 帧超标，它在这里是**净收益**
+  //     （与混元那边「contain 加在滚动容器上更差」不矛盾：那边加在滚动容器自身）；
+  //   · 给 .dlr-card 加 will-change —— 它不是滚动容器，86/125 帧超标；
+  //   · 把 .dlr-card 改成自带滚动容器 —— 有效（0~1/125）但改交互形态，不必要。
+  useEffect(() => {
+    const card = cardRef.current
+    if (!card) return
+    let target = null
+    let prev = ''
+    const apply = () => {
+      if (target && target.isConnected) return
+      let el = card.parentElement
+      for (let i = 0; i < 8 && el; i += 1) {
+        const cs = getComputedStyle(el)
+        const scrolls =
+          (cs.overflowY === 'auto' || cs.overflowY === 'scroll' || cs.overflowY === 'overlay') &&
+          el.scrollHeight > el.clientHeight + 2
+        if (scrolls) {
+          // 宿主若已自行内联声明 will-change，就不覆盖它的选择
+          if (el.style.willChange !== '') return
+          prev = el.style.willChange
+          el.style.willChange = 'scroll-position'
+          target = el
+          return
+        }
+        el = el.parentElement
+      }
+    }
+    apply()
+    // 内容长高（加覆盖行 / 展开日志）之后才变成可滚的情况：尺寸变化时再找一次
+    let ro = null
+    try {
+      if (typeof ResizeObserver !== 'undefined') {
+        ro = new ResizeObserver(() => apply())
+        ro.observe(card)
+      }
+    } catch { /* 无 ResizeObserver 的内核：只在挂载时应用一次 */ }
+    return () => {
+      try { if (ro) ro.disconnect() } catch { /* ignore */ }
+      try { if (target && target.isConnected) target.style.willChange = prev } catch { /* ignore */ }
+    }
+  }, [])
+
   return (
-    <div className="dlr-card">
+    <div className="dlr-card" ref={cardRef}>
       <div className="dlr-head">
         <div className="dlr-headText">
           <div className="dlr-titleRow">

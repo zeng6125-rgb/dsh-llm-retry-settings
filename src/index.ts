@@ -616,11 +616,27 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
         lastRaw = null
         syncFromScope(config as Partial<Config>)
         try {
-          sctx.on('loader/volatile-update', () => {
+          // ctx + { global: true }，两个条件缺一不可（2026-10-04 在真实 _commitVolatile()
+          // 路径上实测，非推断）：
+          //   · 挂 sctx 不行——sctx 是 ctx.inject() 新建的子 fiber。
+          //   · 光挂 ctx 也不行——loader 的发射点自带身份过滤：
+          //       const self = Object.create(fiber.ctx)
+          //       self[Context.filter] = (owner) => owner.fiber === fiber
+          //       fiber.ctx.emit(self, 'loader/volatile-update', paths)
+          //     而 cordis registry.plugin() 返回的是 Object.create(rawFiber) 包装体
+          //     （实测：entry.fiber own `then`=true / own `ctx`=false / 原型才是裸 fiber），
+          //     任何 context 的 `.fiber` 却是**裸 fiber** ⇒ `owner.fiber === fiber`
+          //     恒 false ⇒ 不带 global 的监听器永不回调，设置改动静默不生效。
+          //   · global 绕过 filter（events.ts dispatch：`hook.global || filter(...)`），
+          //     实测同一个回调：不带 global 收 0 次，带 global 每次 volatile 更新都收到。
+          //     代价：别的 entry 改设置也会触发本回调——回调只重读自己的 config，幂等。
+          // 附注：官方插件（dsh-llm-deepseek / dsh-llm-pi-ai 等）只写 ctx.on，
+          // 在本内核上同样收不到此事件——是内核侧包装体/裸 fiber 的身份错配，非本插件问题。
+          ctx.on('loader/volatile-update', () => {
             lastRaw = null
             syncFromScope(config as Partial<Config>)
             diag(`settings sync(volatile): autoContinue=${live.autoContinue} maxContinuations=${live.maxContinuations} enabled=${live.enabled}`)
-          })
+          }, { global: true })
         } catch (error) {
           diag(`loader/volatile-update 监听失败（设置改动需重挂才生效）：${String(error)}`)
         }
