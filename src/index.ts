@@ -195,8 +195,11 @@ const stats = {
   continues: 0,
   capped: 0,
   skipped: 0,
-  byCode: {} as Record<string, number>,
-  byProvider: {} as Record<string, number>,
+  // 用无原型对象当计数桶：键来自 failure code 与 provider id，若撞上 toString / constructor
+  // 这类原型成员，`bag[key] ?? 0` 会读到原型函数并拼出垃圾值（`__proto__` 则赋值被忽略、
+  // 计数静默丢失）。键空间由适配器 code 与用户配置的 provider 决定，属潜在缺陷。
+  byCode: Object.create(null) as Record<string, number>,
+  byProvider: Object.create(null) as Record<string, number>,
   recent: [] as StatEntry[],
 }
 
@@ -241,6 +244,16 @@ const ENTRY_ID = 'llm-retry-settings'
 /** 默认续写指令：用户可在设置页以 continuationPrompt 覆盖。 */
 const DEFAULT_CONTINUATION_PROMPT =
   '上一条回复因达到输出 token 上限被截断。请从中断处直接继续输出，不要重复已经输出的内容，也不要重新开头。'
+
+/**
+ * continueOnError 场景的默认续写指令。
+ *
+ * 为什么不能复用上面那条：瞬时错误耗尽重试时**根本没有被截断的正文**，套用「因达到输出
+ * token 上限被截断、请从中断处继续」会让模型去找一段不存在的截断点（甚至重述已经说完的
+ * 内容）。两种成因的默认文案必须分开；用户自定义的 continuationPrompt 仍然优先于两者。
+ */
+const DEFAULT_ERROR_CONTINUATION_PROMPT =
+  '上一条回复因请求失败（自动重试已耗尽）而中断。请继续完成用户上一条请求，不要重复已经输出的内容，也不要重新开头。'
 
 /** 默认补充码：400 reasoning_text（INVALID_REQUEST，OpenAI thinking 模式冲突）与
  *  pi-ai 兜底错误（PI_AI_ERROR，覆盖 STREAM_ERROR 等流式失败）。 */
@@ -591,6 +604,60 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
    *  给 overrides 的 model 匹配用：宿主侧 payload 里只有 provider，没有 model。 */
   const models = new Map<string, { provider: string; model: string }>()
 
+  /** 记下会话的 provider/model；超 STATE_MAX 丢最早插入的（长跑进程里会话只增不减）。 */
+  const rememberModel = (id: string, provider: string, model: string): void => {
+    if (id === '' || model === '') return
+    models.set(id, { provider, model })
+    while (models.size > STATE_MAX) {
+      const oldest = models.keys().next().value
+      if (typeof oldest !== 'string') break
+      models.delete(oldest)
+    }
+  }
+
+  /**
+   * 取会话当前的 model（overrides 的 model 匹配 + 诊断用）。
+   *
+   * 为什么不能只信 models 缓存：内核只在**首次**请求和**发生变化**时补发
+   * request/header 与 request/context —— `if (!this.requestHeaderLogged)`
+   * （dsh-agent-loop/lib/index.js:1222；该标志挂在 AgentLoop 实例上，插件热重载不会
+   * 重置它），request/context 也只在 provider/model/contextWindow 变化时 append。
+   * 于是「本插件实例加载前就已发过请求的会话」在 models 里永远是空的 ⇒ overrides 的
+   * model 级策略**静默失效**，诊断里显示 model=(n/a)。
+   * host.log 实证：同一 provider 在同一分钟内 (n/a) 与 deepseek-v4.1-flash 交错出现。
+   *
+   * 兜底读会话自身的折叠值（内核自己也是这么取的：dsh-agent-loop:1219/1267）：
+   *   session.requestContext()        → request/context 的 data（含 model/provider）
+   *   session.requestHeader()?.config → canonicalHeader 归一后的 header（含 model）
+   * 取到就补进缓存，后续事件走快路径。
+   */
+  const modelOf = (session: any, provider: string): string => {
+    const id = String(session?.id ?? '')
+    if (id === '') return ''
+    const known = models.get(id)
+    if (known?.model) return known.model
+    let meta: any
+    try {
+      meta = typeof session?.requestContext === 'function' ? session.requestContext() : undefined
+    } catch {
+      /* 会话已销毁 / 内核无此方法：退回 header */
+    }
+    let model = typeof meta?.model === 'string' ? meta.model : ''
+    if (model === '') {
+      try {
+        const header = typeof session?.requestHeader === 'function' ? session.requestHeader() : undefined
+        const fromHeader = header?.config?.model
+        if (typeof fromHeader === 'string') model = fromHeader
+      } catch {
+        /* 同上 */
+      }
+    }
+    if (model !== '') {
+      rememberModel(id, provider || (typeof meta?.provider === 'string' ? meta.provider : ''), model)
+    }
+    return model
+  }
+
   // 与 dsh-thinking-compact 同款：ctx.inject(['settings']) + settings.register 直连，
   // 服务可用后注册命名空间并开始 live 同步（scope.watch 即时回调）。
   // 0.1.7 起 register/installSection 都不存在（设置服务 = SettingsForms），改 configure()。
@@ -689,7 +756,7 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
       // 两条都没有则是整个 agent/* 链路的问题（重试覆盖同样失效）。
       const code = payload?.code ?? payload?.failure?.code ?? ''
       const provider = typeof payload?.provider === 'string' ? payload.provider : ''
-      const model = models.get(String(payload?.agent?.session?.id ?? ''))?.model ?? ''
+      const model = modelOf(payload?.agent?.session, provider)
       // provider/model 覆盖：按配置顺序取第一条命中；-1 的字段继承全局值。
       const override = matchOverride(cfg.overrides, provider, model)
       const eff = {
@@ -741,6 +808,17 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
   // session/event 是 post-commit 追加流，构造期种子（resume/fork/replay）不发射
   // （dsh-session/lib/index.js:1282 “constructor seeds do not emit”），
   // 因此重新打开一个历史上被截断过的旧会话不会触发续写。
+  // 插件被卸载 / 热重载后不再投递挂起的续写：attempt 在 `await agent.whenIdle()` 期间本实例
+  // 可能已被释放，而旧实例的 states 与全部守卫都还在 —— 会往会话里插一条过期续写；若新实例
+  // 的 agent/status 兜底同时处理同一 turn（新账本 lastTurn=-1），还可能双发。
+  let disposed = false
+  ctx.effect(
+    () => () => {
+      disposed = true
+    },
+    'dsh-llm-retry-settings: dispose guard',
+  )
+
   const states = new Map<string, ContinueState>()
   const stateOf = (id: string): ContinueState => {
     let state = states.get(id)
@@ -876,8 +954,11 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
           else await new Promise((resolve) => setTimeout(resolve, 0))
           // 等待期间情况可能已经变了：跑了新回合、人工重新发言（chain 被重置）、
           // 或会话已 dispose。任何一种都放弃，绝不补一发过期的续写。
-          if (state.lastTurn !== turn || state.chain !== expectedChain || !states.has(sessionId)) {
-            diag(`放弃投递 round=${round} via=${via} session=${sessionId} turn=${turn} lastTurn=${state.lastTurn} chain=${state.chain}`)
+          if (disposed || state.lastTurn !== turn || state.chain !== expectedChain || !states.has(sessionId)) {
+            diag(
+              `放弃投递 round=${round} via=${via} session=${sessionId} turn=${turn}` +
+                ` disposed=${disposed} lastTurn=${state.lastTurn} chain=${state.chain}`,
+            )
             return
           }
           // 等待 whenIdle 期间用户可能已经自己发言/排队：让位给用户，不再补续写。
@@ -889,7 +970,10 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
           }
           const fresh = current()
           const custom = fresh.continuationPrompt.trim()
-          const prompt = custom || DEFAULT_CONTINUATION_PROMPT
+          // 成因不同 → 默认文案不同（见 DEFAULT_ERROR_CONTINUATION_PROMPT 的注释）；
+          // 用户自定义的 continuationPrompt 两种情况都优先。
+          const prompt =
+            custom || (transientFailure ? DEFAULT_ERROR_CONTINUATION_PROMPT : DEFAULT_CONTINUATION_PROMPT)
           agent.followup(makeContinuationMessage(prompt))
           stats.continues += 1
           const known = models.get(sessionId)
@@ -935,16 +1019,8 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
           case 'request/header': {
             const meta = event.type === 'request/context' ? event.data : event.data?.header?.config
             const model = meta?.model
-            if (typeof model === 'string' && model !== '') {
-              models.set(String(session.id), {
-                provider: typeof meta?.provider === 'string' ? meta.provider : '',
-                model,
-              })
-              while (models.size > STATE_MAX) {
-                const oldest = models.keys().next().value
-                if (typeof oldest !== 'string') break
-                models.delete(oldest)
-              }
+            if (typeof model === 'string') {
+              rememberModel(String(session.id), typeof meta?.provider === 'string' ? meta.provider : '', model)
             }
             return
           }
@@ -1021,8 +1097,26 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
           /* 客户端已断开：忽略 */
         }
       }
+      // register 撞重复路径会抛（dsh-host-webserver/lib/index.js:179 `webserver: duplicate exact
+      // route`）：插件被两个 entry 同时加载时，第二条实例在第一条路径上就会抛。旧写法把两次
+      // register 写在同一个数组字面量里 —— 若只有第二条抛错，第一条已经注册成功却没有 disposer
+      // （泄漏），且下次重载仍在同一路径上撞重复，该进程内观测面板就永久 404。
+      // 改成逐个 try：抛的那条退化为 undefined，已注册的那条照常交给 disposeAll 回收。
+      const tryRegister = (route: any): (() => void) | undefined => {
+        try {
+          return ws.register(route)
+        } catch (error) {
+          diag(`观测路由注册失败（${String(route?.path ?? '?')}）：${String(error)}`)
+          try {
+            ctx.logger?.warn?.('[dsh-llm-retry-settings] 观测路由注册失败', error)
+          } catch {
+            /* logger 不可用：diag 已记 */
+          }
+          return undefined
+        }
+      }
       const routes: Array<(() => void) | undefined> = [
-        ws.register({
+        tryRegister({
           kind: 'exact',
           path: STATS_PATH,
           handler: (req: any, res: any) => {
@@ -1045,7 +1139,7 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
             })
           },
         }),
-        ws.register({
+        tryRegister({
           kind: 'exact',
           path: LOG_ROUTE_PATH,
           handler: (req: any, res: any) => {
@@ -1054,8 +1148,12 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
               return
             }
             const url = new URL(String(req.url ?? LOG_ROUTE_PATH), 'http://localhost')
-            const asked = Number(url.searchParams.get('tail') ?? '80')
-            const tail = Math.min(Math.max(Number.isFinite(asked) ? asked : 80, 1), 500)
+            // 参数归一化：缺省 / 空白 → 80；非数 → 80；小数 → 取整；越界 → 夹到 [1,500]。
+            // （曾经只做 Number.isFinite 夹取：`?tail=3.7` 原样回显成 `tail: 3.7`，
+            //   而 slice 按 3 截断实际给了 4 行——返回体与实际行数不一致。）
+            const raw = url.searchParams.get('tail')
+            const asked = raw === null || raw.trim() === '' ? 80 : Number(raw)
+            const tail = Math.min(Math.max(Number.isFinite(asked) ? Math.trunc(asked) : 80, 1), 500)
             try {
               const all = readFileSync(LOG_FILE, 'utf8').split('\n')
               json(res, 200, {

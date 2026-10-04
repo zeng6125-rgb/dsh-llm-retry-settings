@@ -83,47 +83,42 @@ const DEFAULTS = {
 // TimeoutReason / 注册期抛出的码都不算。宿主升级后按此口径重新扫一遍即可。
 // 分类口径：按「重试有没有恢复价值」分六组，从上到下递减。
 // transient 组是官方默认列表覆盖的瞬时故障；warn=true 的码一律落在后面四组。
-const CODE_CATEGORIES = [
-  { id: 'transient', label: '瞬时故障', note: '重试通常能恢复' },
-  { id: 'quota', label: '限流与配额', note: '退避后可能恢复' },
-  { id: 'request', label: '请求与参数', note: '多为确定性错误' },
-  { id: 'content', label: '内容与能力', note: '模型不支持，重试无意义' },
-  { id: 'auth', label: '凭证与鉴权', note: '先修配置' },
-  { id: 'misc', label: '取消与兜底', note: '慎选' },
-]
+// 文案（分组名/说明、每个码的 tooltip）全部走字典 L.catLabel / L.catNote / L.codeDesc：
+// 这里只留结构与判据 —— 硬编码中文会让英文界面里 25 条码说明与 6 个分组标题全不可读。
+const CODE_CATEGORIES = ['transient', 'quota', 'request', 'content', 'auth', 'misc']
 
 const KNOWN_CODES = [
   // —— 瞬时故障 ——
-  { code: 'SERVER', cat: 'transient', desc: 'HTTP 5xx 服务端错误' },
-  { code: 'TIMEOUT', cat: 'transient', desc: '请求超时：整次请求未在时限内返回；SSE 卡流（stream idle 看门狗）也以此码上报' },
-  { code: 'TRANSPORT', cat: 'transient', desc: '网络中断、连接重置、流提前结束' },
-  { code: 'EMPTY_RESPONSE', cat: 'transient', desc: '流正常结束但零内容块；重试安全' },
-  { code: 'STREAM_CLOSED', cat: 'transient', desc: 'deepseek SSE 流未收到 [DONE] 就断开' },
-  { code: 'MALFORMED_RESPONSE', cat: 'transient', desc: 'SSE 数据帧格式损坏' },
-  { code: 'INVALID_RESPONSE', cat: 'transient', desc: '响应结构不符合预期（偶发可试）' },
-  { code: 'PI_AI_ERROR', cat: 'transient', desc: 'pi-ai 兜底未知错误；STREAM_ERROR 流式失败归此类' },
-  { code: 'PI_AI_NOT_WARMED', cat: 'transient', desc: 'pi-ai 适配器尚未预热完成就被调用（启动竞态）；退避后重试通常能成' },
+  { code: 'SERVER', cat: 'transient' },
+  { code: 'TIMEOUT', cat: 'transient' },
+  { code: 'TRANSPORT', cat: 'transient' },
+  { code: 'EMPTY_RESPONSE', cat: 'transient' },
+  { code: 'STREAM_CLOSED', cat: 'transient' },
+  { code: 'MALFORMED_RESPONSE', cat: 'transient' },
+  { code: 'INVALID_RESPONSE', cat: 'transient' },
+  { code: 'PI_AI_ERROR', cat: 'transient' },
+  { code: 'PI_AI_NOT_WARMED', cat: 'transient' },
   // —— 限流与配额 ——
-  { code: 'RATE_LIMIT', cat: 'quota', desc: '429 限流' },
-  { code: 'QUOTA', cat: 'quota', warn: true, desc: '配额/余额耗尽（规范字面值就是 QUOTA）；重试无意义' },
+  { code: 'RATE_LIMIT', cat: 'quota' },
+  { code: 'QUOTA', cat: 'quota', warn: true },
   // —— 请求与参数 ——
-  { code: 'INVALID_REQUEST', cat: 'request', desc: '400 类请求被拒（如 thinking 模式 reasoning_text 冲突、payload 超限）' },
-  { code: 'CONTEXT_WINDOW_EXCEEDED', cat: 'request', warn: true, desc: '上下文超窗；重试同样失败，应压缩上下文' },
-  { code: 'UNSUPPORTED_OPTION', cat: 'request', warn: true, desc: '适配器不支持该生成参数（如 stop）；改参数而非重试' },
-  { code: 'UNKNOWN_MODEL', cat: 'request', warn: true, desc: '请求的模型不在目录；重试同样失败，应改模型选择' },
-  { code: 'REQUEST_EXTENSION', cat: 'request', warn: true, desc: 'deepseek 请求扩展（图片/搜索等）准备或受理失败（extension field 冲突等）；多为确定性错误' },
-  { code: 'INVALID_REPLAY_STATE', cat: 'request', warn: true, desc: 'pi-ai 重放状态损坏（内部管线错误）' },
+  { code: 'INVALID_REQUEST', cat: 'request' },
+  { code: 'CONTEXT_WINDOW_EXCEEDED', cat: 'request', warn: true },
+  { code: 'UNSUPPORTED_OPTION', cat: 'request', warn: true },
+  { code: 'UNKNOWN_MODEL', cat: 'request', warn: true },
+  { code: 'REQUEST_EXTENSION', cat: 'request', warn: true },
+  { code: 'INVALID_REPLAY_STATE', cat: 'request', warn: true },
   // —— 内容与能力 ——
-  { code: 'UNSUPPORTED_CONTENT', cat: 'content', warn: true, desc: '该模型不支持此类内容（如图片）' },
-  { code: 'UNSUPPORTED_REASONING_EFFORT', cat: 'content', warn: true, desc: '该模型不支持所选推理档位' },
-  { code: 'FILES_API', cat: 'content', warn: true, desc: 'deepseek 文件服务 HTTP 失败' },
+  { code: 'UNSUPPORTED_CONTENT', cat: 'content', warn: true },
+  { code: 'UNSUPPORTED_REASONING_EFFORT', cat: 'content', warn: true },
+  { code: 'FILES_API', cat: 'content', warn: true },
   // —— 凭证与鉴权 ——
-  { code: 'AUTH', cat: 'auth', warn: true, desc: '401/403 认证被拒；修密钥而非重试' },
-  { code: 'INVALID_CREDENTIAL', cat: 'auth', warn: true, desc: '凭证格式非法；修正存储值' },
-  { code: 'MISSING_CREDENTIAL', cat: 'auth', warn: true, desc: '缺少 API Key；先去模型页配置' },
+  { code: 'AUTH', cat: 'auth', warn: true },
+  { code: 'INVALID_CREDENTIAL', cat: 'auth', warn: true },
+  { code: 'MISSING_CREDENTIAL', cat: 'auth', warn: true },
   // —— 取消与兜底 ——
-  { code: 'ABORTED', cat: 'misc', warn: true, desc: '调用方主动取消；绝不应重试' },
-  { code: 'UNKNOWN', cat: 'misc', warn: true, desc: '非 LlmError 的通用兜底；勾选=广撒网' },
+  { code: 'ABORTED', cat: 'misc', warn: true },
+  { code: 'UNKNOWN', cat: 'misc', warn: true },
 ]
 
 const KNOWN_CODE_SET = new Set(KNOWN_CODES.map((k) => k.code))
@@ -237,6 +232,52 @@ const ZH = {
   promptTemplateHint: '选模板只是把文案填进下面的输入框，仍可自由修改；选「内置默认」等于清空输入框。',
   promptTemplatePick: '插入模板…',
   fieldPromptTemplateState: (name) => `当前使用模板：${name}`,
+
+  // —— 错误码分组与逐码说明（原先硬编码在 CODE_CATEGORIES / KNOWN_CODES 里，
+  //    导致英文界面下 25 条 tooltip 与 6 个分组标题全是中文）——
+  catLabel: {
+    transient: '瞬时故障',
+    quota: '限流与配额',
+    request: '请求与参数',
+    content: '内容与能力',
+    auth: '凭证与鉴权',
+    misc: '取消与兜底',
+  },
+  catNote: {
+    transient: '重试通常能恢复',
+    quota: '退避后可能恢复',
+    request: '多为确定性错误',
+    content: '模型不支持，重试无意义',
+    auth: '先修配置',
+    misc: '慎选',
+  },
+  codeDesc: {
+    SERVER: 'HTTP 5xx 服务端错误',
+    TIMEOUT: '请求超时：整次请求未在时限内返回；SSE 卡流（stream idle 看门狗）也以此码上报',
+    TRANSPORT: '网络中断、连接重置、流提前结束',
+    EMPTY_RESPONSE: '流正常结束但零内容块；重试安全',
+    STREAM_CLOSED: 'deepseek SSE 流未收到 [DONE] 就断开',
+    MALFORMED_RESPONSE: 'SSE 数据帧格式损坏',
+    INVALID_RESPONSE: '响应结构不符合预期（偶发可试）',
+    PI_AI_ERROR: 'pi-ai 兜底未知错误；STREAM_ERROR 流式失败归此类',
+    PI_AI_NOT_WARMED: 'pi-ai 适配器尚未预热完成就被调用（启动竞态）；退避后重试通常能成',
+    RATE_LIMIT: '429 限流',
+    QUOTA: '配额/余额耗尽（规范字面值就是 QUOTA）；重试无意义',
+    INVALID_REQUEST: '400 类请求被拒（如 thinking 模式 reasoning_text 冲突、payload 超限）',
+    CONTEXT_WINDOW_EXCEEDED: '上下文超窗；重试同样失败，应压缩上下文',
+    UNSUPPORTED_OPTION: '适配器不支持该生成参数（如 stop）；改参数而非重试',
+    UNKNOWN_MODEL: '请求的模型不在目录；重试同样失败，应改模型选择',
+    REQUEST_EXTENSION: 'deepseek 请求扩展（图片/搜索等）准备或受理失败；多为确定性错误',
+    INVALID_REPLAY_STATE: 'pi-ai 重放状态损坏（内部管线错误）',
+    UNSUPPORTED_CONTENT: '该模型不支持此类内容（如图片）',
+    UNSUPPORTED_REASONING_EFFORT: '该模型不支持所选推理档位',
+    FILES_API: 'deepseek 文件服务 HTTP 失败',
+    AUTH: '401/403 认证被拒；修密钥而非重试',
+    INVALID_CREDENTIAL: '凭证格式非法；修正存储值',
+    MISSING_CREDENTIAL: '缺少 API Key；先去模型页配置',
+    ABORTED: '调用方主动取消；绝不应重试',
+    UNKNOWN: '非 LlmError 的通用兜底；勾选=广撒网',
+  },
 }
 
 const EN = {
@@ -341,6 +382,51 @@ const EN = {
   promptTemplateHint: 'Picking a template only fills the text box below — you can still edit it. "Built-in default" clears the box.',
   promptTemplatePick: 'Insert template…',
   fieldPromptTemplateState: (name) => `Template: ${name}`,
+
+  // —— error-code groups and per-code descriptions (previously hardcoded Chinese) ——
+  catLabel: {
+    transient: 'Transient',
+    quota: 'Rate limit & quota',
+    request: 'Request & params',
+    content: 'Content & capability',
+    auth: 'Credentials & auth',
+    misc: 'Cancel & fallback',
+  },
+  catNote: {
+    transient: 'Retrying usually recovers',
+    quota: 'May recover after backoff',
+    request: 'Mostly deterministic errors',
+    content: 'Unsupported by the model — retrying is pointless',
+    auth: 'Fix the configuration first',
+    misc: 'Pick with care',
+  },
+  codeDesc: {
+    SERVER: 'HTTP 5xx server error',
+    TIMEOUT: 'Request timed out before returning; the SSE stream-idle watchdog reports this code too',
+    TRANSPORT: 'Connection dropped, reset, or the stream ended early',
+    EMPTY_RESPONSE: 'Stream ended cleanly with zero content blocks; safe to retry',
+    STREAM_CLOSED: 'deepseek SSE stream closed before [DONE]',
+    MALFORMED_RESPONSE: 'Corrupted SSE frame',
+    INVALID_RESPONSE: 'Response shape did not match expectations (worth a try when rare)',
+    PI_AI_ERROR: 'pi-ai catch-all; STREAM_ERROR stream failures land here',
+    PI_AI_NOT_WARMED: 'pi-ai adapter called before warm-up (startup race); usually succeeds after backoff',
+    RATE_LIMIT: '429 rate limited',
+    QUOTA: 'Quota/balance exhausted; retrying is pointless',
+    INVALID_REQUEST: '400-class rejection (e.g. thinking/reasoning_text conflict, oversized payload)',
+    CONTEXT_WINDOW_EXCEEDED: 'Context window exceeded; a retry fails too — compact instead',
+    UNSUPPORTED_OPTION: 'Adapter rejects this generation option (e.g. stop); change it rather than retry',
+    UNKNOWN_MODEL: 'Model not in the catalog; switch models instead of retrying',
+    REQUEST_EXTENSION: 'deepseek request extension (image/search) failed to prepare or accept; usually deterministic',
+    INVALID_REPLAY_STATE: 'pi-ai replay state corrupted (internal pipeline error)',
+    UNSUPPORTED_CONTENT: 'The model does not support this content type (e.g. images)',
+    UNSUPPORTED_REASONING_EFFORT: 'The model does not support the selected reasoning effort',
+    FILES_API: 'deepseek file service HTTP failure',
+    AUTH: '401/403 rejected; fix the key rather than retry',
+    INVALID_CREDENTIAL: 'Credential format is invalid; fix the stored value',
+    MISSING_CREDENTIAL: 'API key missing; configure it on the model page first',
+    ABORTED: 'Cancelled by the caller; never retry',
+    UNKNOWN: 'Generic non-LlmError fallback; selecting it casts a wide net',
+  },
 }
 
 const STR = { zh: ZH, en: EN }
@@ -519,6 +605,8 @@ function NumberField({ label, hint, value, min, max, step, disabled, dirty, onCh
       <input
         type="number"
         className="dlr-input"
+        // 控件可访问名：label 是纯 span，不关联的话读屏只念「编辑框 N」
+        aria-label={label}
         min={min}
         max={float ? max : undefined}
         step={step}
@@ -545,6 +633,7 @@ function PromptField({ label, hint, value, placeholder, disabled, dirty, onChang
       </div>
       <textarea
         className="dlr-textarea"
+        aria-label={label}
         value={value}
         placeholder={placeholder}
         disabled={disabled}
@@ -560,6 +649,8 @@ function Chip({ code, title, warn, unknown, on, disabled, onClick }) {
     <button
       type="button"
       title={title}
+      // 选中态不能只靠 CSS class：读屏软件要靠 aria-pressed 才能念出「已按下/未按下」
+      aria-pressed={!!on}
       className={
         'dlr-chip' + (warn ? ' warn' : '') + (unknown ? ' unknown' : '') + (on ? ' on' : '')
       }
@@ -574,14 +665,16 @@ function Chip({ code, title, warn, unknown, on, disabled, onClick }) {
 function CodeChips({ selected, disabled, onToggle, onClear, onAdd }) {
   const [input, setInput] = useState('')
   const commit = () => {
-    if (input.trim() === '') return
-    onAdd(input)
-    setInput('')
+    const value = input.trim()
+    if (value === '') return
+    // 只有真的加进去才清空输入框：被 CODE_RE 拒绝或与已有码重复时保留原文，
+    // 用户不必照着提示重敲一遍（onAdd 明确返回 false 才算失败）
+    if (onAdd(value) !== false) setInput('')
   }
   const selSet = new Set(selected)
   const custom = selected.filter((c) => !KNOWN_CODE_SET.has(c))
-  const chip = ({ code, desc, warn }) => (
-    <Chip key={code} code={code} title={desc} warn={warn} on={selSet.has(code)}
+  const chip = ({ code, warn }) => (
+    <Chip key={code} code={code} title={L.codeDesc[code] || code} warn={warn} on={selSet.has(code)}
       disabled={disabled} onClick={() => onToggle(code)} />
   )
   return (
@@ -627,17 +720,17 @@ function CodeChips({ selected, disabled, onToggle, onClear, onAdd }) {
         </div>
       )}
       {CODE_CATEGORIES.map((cat) => {
-        const items = KNOWN_CODES.filter((k) => k.cat === cat.id)
+        const items = KNOWN_CODES.filter((k) => k.cat === cat)
         if (items.length === 0) return null
         // 组内仍是「已选靠前」+ 其余按 KNOWN_CODES 规范顺序（v0.1.5 行为），
         // 分组只决定行归属，勾选不会让 chip 跳到别的组去。
         const picked = items.filter((k) => selSet.has(k.code))
         const others = items.filter((k) => !selSet.has(k.code))
         return (
-          <div className="dlr-chipGroup" key={cat.id}>
+          <div className="dlr-chipGroup" key={cat}>
             <span className="dlr-chipGroupLabel">
-              {cat.label}
-              {cat.note ? <em>{cat.note}</em> : null}
+              {L.catLabel[cat] || cat}
+              {L.catNote[cat] ? <em>{L.catNote[cat]}</em> : null}
               {picked.length > 0 ? <b>{picked.length}</b> : null}
             </span>
             <div className="dlr-chips">
@@ -852,7 +945,8 @@ function OverridesEditor({ rows, disabled, onChange }) {
   const numValue = (r, key, scale) => {
     const raw = r[key]
     if (typeof raw !== 'number' || raw < 0) return ''
-    return String(scale === undefined ? raw : Math.round(raw * scale))
+    // 保留一位小数：抖动按 % 显示时，0.5% 直接 Math.round 会显示成 1（与实际存储值不符）
+    return String(scale === undefined ? raw : Math.round(raw * scale * 10) / 10)
   }
   const input = (i, key, r, placeholder, width, scale) => (
     <input
@@ -912,8 +1006,10 @@ function OverridesEditor({ rows, disabled, onChange }) {
 }
 
 /** 观测面板：只读路由 + 手动刷新（不轮询：慢变数据只在挂载/点击时拉一次）。 */
-const StatsPanel = memo(function StatsPanel({ logPath, live }) {
-  const L = useL()
+const StatsPanel = memo(function StatsPanel({ logPath, live, lang }) {
+  // 语言走 prop 而不是内部 detectLang()：memo 只做浅比较，logPath/live 不变就不会重渲染，
+  // 面板会停留在切换前的语言。lang 变化即重渲染。
+  const L = STR[lang] || ZH
   const [state, setState] = useState({ status: live ? 'idle' : 'stale', data: null, error: '' })
   const [tail, setTail] = useState(null)
   const load = useCallback(async () => {
@@ -1074,7 +1170,14 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
   }
 
   const dirty = JSON.stringify(draft) !== currentKey
-  const update = (field, v) => setDraft((d) => ({ ...d, [field]: v }))
+  // 与宿主 coerceConfig 的收尾夹取保持一致（src/index.ts: `if (cfg.initialDelayMs > cfg.maxDelayMs)`）：
+  // 官方 localDelay 也以 maxDelayMs 封顶，所以初始退避大于最大退避时每档实际都等 maxDelayMs。
+  // 草稿里不镜像这一步的话，摘要行会写「退避 10000ms→5000ms」，与正下方的曲线/预算自相矛盾。
+  const update = (field, v) => setDraft((d) => {
+    const next = { ...d, [field]: v }
+    if (next.initialDelayMs > next.maxDelayMs) next.initialDelayMs = next.maxDelayMs
+    return next
+  })
   const codesOf = (d) => (Array.isArray(d.retryableCodes) ? d.retryableCodes : [])
   const toggleCode = (code) => {
     const cur = codesOf(draft)
@@ -1085,12 +1188,14 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
   // 反馈写在 updater 外：updater 在并发渲染下可能被跑多次，不适合带副作用。
   const addCode = (raw) => {
     const code = String(raw ?? '').trim().toUpperCase()
-    if (code === '') return
-    if (!CODE_RE.test(code)) { setAddMsg({ kind: 'bad', code }); return }
+    // 返回值 = 是否真的加入：CodeChips 只在成功时清空输入框（失败保留原文，不必重敲）
+    if (code === '') return false
+    if (!CODE_RE.test(code)) { setAddMsg({ kind: 'bad', code }); return false }
     const cur = codesOf(draft)
-    if (cur.includes(code)) { setAddMsg({ kind: 'dup', code }); return }
+    if (cur.includes(code)) { setAddMsg({ kind: 'dup', code }); return false }
     setAddMsg(null)
     update('retryableCodes', [...cur, code])
+    return true
   }
 
   const save = useCallback(async () => {
@@ -1258,8 +1363,10 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
               min={1} step={500} suffix={L.suffixMs}
               disabled={!writable} dirty={draft.maxDelayMs !== current.maxDelayMs}
               onChange={(n) => update('maxDelayMs', n)} onEnter={save} />
+            {/* 本字段是 0~1 的比例（见 hint）；原先带 "%" 后缀会把 0.1 显示成「0.1 %」，
+                而同屏状态行写的是「抖动 10%」——同一份数据两种读法。去掉后缀，输入框只放比例。 */}
             <NumberField label={L.fieldJitter} hint={L.fieldJitterHint} value={draft.jitterRatio}
-              min={0} max={1} step={0.05} float suffix="%"
+              min={0} max={1} step={0.05} float
               disabled={!writable} dirty={draft.jitterRatio !== current.jitterRatio}
               onChange={(n) => update('jitterRatio', n)} onEnter={save} />
           </div>
@@ -1373,7 +1480,7 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
         </div>
 
         {/* 观测面板：同源 fetch 只读路由；挂载与手动刷新各拉一次，不轮询。 */}
-        <StatsPanel logPath={logAbsolute()} live={hostFresh} />
+        <StatsPanel logPath={logAbsolute()} live={hostFresh} lang={detectLang()} />
       </div>
 
       {/* 排错日志：按钮用宿主给出的绝对路径调壳层 openPath 打开日志目录；
@@ -1480,9 +1587,27 @@ function makeRemoteSettingsScope(ctx, namespace) {
   }
   try {
     if (ctx && ctx.remote && typeof ctx.remote.$on === 'function') {
-      ctx.remote.$on('settings/document-updated', (ns) => {
+      const off = ctx.remote.$on('settings/document-updated', (ns) => {
         if (NS_KEYS.indexOf(ns) >= 0) scheduleRefresh(200)
       })
+      // $on 内部是 events.subscribe(this.ctx, …)：订阅挂在网关自己的 ctx 上，**不随本插件
+      // fiber 释放**（官方写法即 ctx.effect(() => ctx.remote.$on(…))）。不回收的话每次热重载
+      // 都累积一份监听，死 scope 每次设置变更都白跑一次 describe RPC；未触发的 200ms 定时器
+      // 也会在卸载后继续跑。
+      const dispose = () => {
+        try {
+          if (typeof off === 'function') off()
+        } catch {
+          /* 网关已释放 */
+        }
+        if (pending) {
+          clearTimeout(pending)
+          pending = null
+        }
+      }
+      if (typeof ctx.effect === 'function') {
+        ctx.effect(() => dispose, PLUGIN_ID + ': settings document subscription')
+      }
     }
   } catch (error) {
     /* 事件通道不可用：退回手动刷新 */
@@ -1563,7 +1688,10 @@ export function apply(ctx) {
       name: 'settings.section',
       id: 'llm-retry-settings',
       order: 15,
-      label: () => L.title,
+      // 语言必须在这里现算，不能读模块级 L：设置页只渲染当前分区（宿主 `renderSlot(…, {only: active})`），
+      // 本卡片没渲染过时 L 还是模块初值 ZH ⇒ 英文界面里导航项恒为中文；而宿主会把 thunk 结果缓存进
+      // 导航行（仅在 slots 版本 / locale 变化时重算），卡片渲染本身不触发重算。
+      label: () => (STR[detectLang()] || ZH).title,
       inject: () => ({ useScope, scope, hostHome })
     }, RetrySettingsRow), PLUGIN_ID + ': settings section')
   }
