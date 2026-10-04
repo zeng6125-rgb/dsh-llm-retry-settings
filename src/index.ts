@@ -76,7 +76,7 @@ const unvol = <T>(v: T): T =>
     : v
 
 /** 诊断构建标记：写进 host.log，用来确认运行中的到底是哪一版 lib/index.js。 */
-const DIAG_TAG = 'v0.1.12'
+const DIAG_TAG = 'v0.1.13'
 
 /**
  * 文件诊断日志：`~/.dsh/logs/dsh-llm-retry-settings/host.log`。

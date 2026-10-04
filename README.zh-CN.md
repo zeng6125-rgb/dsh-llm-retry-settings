@@ -8,6 +8,11 @@ DSH「LLM 自动重试」设置卡片：在 **设置 → General** 里调整自�
 
 - **自带设置 UI**（客户端 bundle `lib/client.js`）：一张位于 **设置 → General** 的卡片，无需另外装 UI 包。
 - 覆盖 `agent/request-error` 重试策略中的 `maxRetries`、`initialDelayMs`、`maxDelayMs`、`jitterRatio`。
+- **0.1.13 修复** 设置卡片滑动明显更顺：滚动容器补上合成层提示（实测滚动 p99 30.2ms → 6.2~12.1ms，超过 16.7ms 的帧从 11~13/410 降到 0~2/410）。
+- **0.1.13 修复** 插件重载后 **model 级覆盖规则不再静默失效**：内核只在**首次**请求与**变化**时补发 `request/header`/`request/context`（首次标记挂在 AgentLoop 实例上，重载不会重置），所以重载前就已发过请求的会话取不到 model；现在回落到会话自身的 `requestContext()` / `requestHeader()`，诊断里的 `model=(n/a)` 随之消失。
+- **0.1.13 修复** 设置改动**即时生效**：`loader/volatile-update` 监听改用 `{ global: true }` —— 内核的过滤器拿裸 fiber 与 entry 的包装体比较，恒不相等，此前该事件根本收不到（官方 `dsh-llm-deepseek` / `dsh-llm-pi-ai` 等同样收不到）。
+- **0.1.13 修复** 英文界面不再混中文：25 条错误码说明与 6 个分组标题进字典；设置页左侧入口名不再滞后于语言切换。
+- **0.1.13 修复** 若干细节：观测路由 `?tail=` 参数归一化、抖动比例单位、初始退避 > 最大退避时的显示、自定义错误码被拒时输入不再被清空、重试耗尽改用独立续写文案、chip 与输入框补可访问性属性。
 - **0.1.12 修复** 会话格式 v4 下自动续写投递失败：消息 source 必须是 producer-owned 形态，续写消息改携 `source.kind = "plugin:dsh-llm-retry"`（退役的 `{kind:"plugin"}` 包装不再被接受）；host.log 的「续写消息已入会话」识别同步恢复。
 - **0.1.11 新增** 支持新内核 **0.1.7-alpha.1**（设置 API 迁移到 `SettingsForms`：volatile 表单字段、`loader/volatile-update` 实时同步、卡片经 `remote.settings` 读写）。
 - **0.1.11 新增** 改善设置卡片滑动流畅度，修复 bug。
@@ -32,12 +37,12 @@ DSH「LLM 自动重试」设置卡片：在 **设置 → General** 里调整自�
 ### 方式 A —— GitHub Release 安装包（推荐）
 
 ```bash
-# 1. 从 v0.1.12 release 下载打包好的插件 tgz
-gh release download v0.1.12 -R zeng6125-rgb/dsh-llm-retry-settings
+# 1. 从 v0.1.13 release 下载打包好的插件 tgz
+gh release download v0.1.13 -R zeng6125-rgb/dsh-llm-retry-settings
 
 # 2. 解压进 profile 的 node_modules
 mkdir -p ~/.dsh/profiles/web/node_modules
-tar -xzf dsh-llm-retry-settings-0.1.12.tgz -C ~/.dsh/profiles/web/node_modules/
+tar -xzf dsh-llm-retry-settings-0.1.13.tgz -C ~/.dsh/profiles/web/node_modules/
 mv ~/.dsh/profiles/web/node_modules/package \
    ~/.dsh/profiles/web/node_modules/dsh-llm-retry-settings
 
@@ -54,7 +59,7 @@ mv ~/.dsh/profiles/web/node_modules/package \
 dsh plugin --profile web add github:zeng6125-rgb/dsh-llm-retry-settings
 
 # 或从 release tarball 地址安装
-dsh plugin --profile web add https://github.com/zeng6125-rgb/dsh-llm-retry-settings/releases/download/v0.1.12/dsh-llm-retry-settings-0.1.12.tgz
+dsh plugin --profile web add https://github.com/zeng6125-rgb/dsh-llm-retry-settings/releases/download/v0.1.13/dsh-llm-retry-settings-0.1.13.tgz
 ```
 
 装完还需要在 profile 里启用：把 `"dsh-llm-retry-settings"` 加进 `dsh.profile.bundles`（或使用 Desktop 的插件管理 UI），然后重启 DSH。

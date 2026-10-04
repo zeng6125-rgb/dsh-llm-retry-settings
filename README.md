@@ -8,6 +8,11 @@ A settings card for the DSH LLM auto-retry engine (`@deepseek-ai/dsh-llm-retry`)
 
 - **Includes the settings UI** (client bundle `lib/client.js`): a card in **Settings → General** — no separate UI package needed.
 - Overrides `maxRetries`, `initialDelayMs`, `maxDelayMs`, and `jitterRatio` on the `agent/request-error` retry policy.
+- **New in 0.1.13** — noticeably smoother settings-card scrolling: the scroll container now gets a compositing hint (measured p99 30.2ms → 6.2–12.1ms; frames over 16.7ms dropped from 11–13/410 to 0–2/410).
+- **New in 0.1.13** — **model-level overrides no longer silently stop working after a plugin reload**: the kernel only re-emits `request/header`/`request/context` on the *first* request and on change (the first-request flag lives on the AgentLoop instance and a plugin reload does not reset it), so sessions that had already made a request resolved no model; the lookup now falls back to the session's own `requestContext()` / `requestHeader()`, and the `model=(n/a)` diagnostics disappear with it.
+- **New in 0.1.13** — settings changes apply **immediately**: the `loader/volatile-update` listener now uses `{ global: true }` — the kernel's filter compares a bare fiber against the entry's wrapper, which never matches, so the event was never delivered (the official `dsh-llm-deepseek` / `dsh-llm-pi-ai` listeners miss it too).
+- **New in 0.1.13** — no more Chinese leaking into the English UI: all 25 error-code descriptions and the 6 group titles moved into the dictionaries; the settings-page entry name no longer lags behind a language switch.
+- **New in 0.1.13** — smaller fixes: `?tail=` normalization on the observation route, jitter-ratio unit, initial-delay > max-delay display, custom error-code input no longer cleared on rejection, a separate continuation prompt when retries are exhausted, and accessibility attributes on chips and inputs.
 - **New in 0.1.12** — auto-continue failed on session format v4: message sources must now be producer-owned, so the continuation carries `source.kind = "plugin:dsh-llm-retry"` instead of the retired `{kind:"plugin"}` wrapper; the "continuation landed" line in host.log is detected again.
 - **New in 0.1.11** — compatible with the new kernel **0.1.7-alpha.1** (the settings API moved to `SettingsForms`: volatile form fields, live config sync via `loader/volatile-update`, the card reads/writes through `remote.settings`).
 - **New in 0.1.11** — smoother settings-card scrolling; bug fixes.
@@ -32,12 +37,12 @@ Prerequisite: a DSH Desktop profile (the web profile lives at `~/.dsh/profiles/w
 ### Option A — GitHub Release package (recommended)
 
 ```bash
-# 1. download the packaged plugin tgz from the v0.1.12 release
-gh release download v0.1.12 -R zeng6125-rgb/dsh-llm-retry-settings
+# 1. download the packaged plugin tgz from the v0.1.13 release
+gh release download v0.1.13 -R zeng6125-rgb/dsh-llm-retry-settings
 
 # 2. unpack it into the profile's node_modules
 mkdir -p ~/.dsh/profiles/web/node_modules
-tar -xzf dsh-llm-retry-settings-0.1.12.tgz -C ~/.dsh/profiles/web/node_modules/
+tar -xzf dsh-llm-retry-settings-0.1.13.tgz -C ~/.dsh/profiles/web/node_modules/
 mv ~/.dsh/profiles/web/node_modules/package \
    ~/.dsh/profiles/web/node_modules/dsh-llm-retry-settings
 
@@ -55,7 +60,7 @@ The `dsh plugin` command forwards its arguments to `pnpm` in the profile directo
 dsh plugin --profile web add github:zeng6125-rgb/dsh-llm-retry-settings
 
 # or from the release tarball URL
-dsh plugin --profile web add https://github.com/zeng6125-rgb/dsh-llm-retry-settings/releases/download/v0.1.12/dsh-llm-retry-settings-0.1.12.tgz
+dsh plugin --profile web add https://github.com/zeng6125-rgb/dsh-llm-retry-settings/releases/download/v0.1.13/dsh-llm-retry-settings-0.1.13.tgz
 ```
 
 Then enable the plugin in the profile: add `"dsh-llm-retry-settings"` to `dsh.profile.bundles` (or use the Desktop plugin-inventory UI) and restart DSH.
