@@ -27,6 +27,7 @@ import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import zBundled from '@deepseek-ai/schemastery'
 
@@ -80,16 +81,18 @@ const unvol = <T>(v: T): T =>
  *
  * 2026-10-05：改成**运行时读 package.json**。此前是手写常量，v0.1.14 / v0.1.15 两次发版都忘了同步，
  * 卡片上一直显示 v0.1.13（用户实测发现）。读不到时退回构建期兜底常量。
+ *
+ * 用 readFileSync 而不是 createRequire('../package.json')：require 会把 JSON 缓存进 require.cache，
+ * 热重载清的是 ESM 模块缓存，JSON 仍旧值 ⇒ 版本号要等宿主重启才更新（实测踩到）。
  */
 const DIAG_TAG: string = (() => {
   try {
-    const req = createRequire(import.meta.url)
-    const pkg: any = req('../package.json')
+    const pkg: any = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'))
     if (pkg && typeof pkg.version === 'string' && pkg.version !== '') return 'v' + pkg.version
   } catch {
     /* 包结构异常时用兜底值 */
   }
-  return 'v0.1.15'
+  return 'v0.1.16'
 })()
 
 /**
