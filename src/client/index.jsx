@@ -464,7 +464,13 @@ const CSS = [
   // 卡片高约 2400px，滚到中段时底部按钮早已不可见——这是用户提的诉求。
   // 背景必须用设置页内容区同款 token（宿主 .VOzbGW_content 就是 --dsw-alias-bg-base），
   // 否则吸顶后下面的块会从半透明栏下透出来。
-  '.dlr-head{position:sticky;top:0;z-index:3;display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:14px 0 12px;background:var(--dsw-alias-bg-base,#fff);border-bottom:1px solid var(--dsw-alias-border-l2)}',
+  //
+  // top:-24px 而不是 0：sticky 的偏移是相对滚动容器的**内容盒**，而宿主
+  // `.VOzbGW_options{padding:24px}` 有 24px 内边距 ⇒ 用 0 会在栏顶上方留一条 24px 的缝，
+  // 滚上去的 chips 正好从缝里露出来（用户截图实测）。负偏移让栏顶贴到 padding 盒顶，
+  // 缝就没了；宿主内边距若变小，最多把栏自身 14px 的上内边距吃掉一点，文字不会丢。
+  // 未吸顶时 top 不生效，所以不会在卡片上方多画东西。
+  '.dlr-head{position:sticky;top:-24px;z-index:3;display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:14px 0 12px;background:var(--dsw-alias-bg-base,#fff);border-bottom:1px solid var(--dsw-alias-border-l2)}',
   '.dlr-headActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;flex:none;margin-left:auto}',
   '.dlr-headText{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}',
   '.dlr-titleRow{display:flex;align-items:center;gap:8px}',
