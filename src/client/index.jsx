@@ -472,14 +472,13 @@ const CSS = [
   // 缝就没了；宿主内边距若变小，最多把栏自身 14px 的上内边距吃掉一点，文字不会丢。
   // 未吸顶时 top 不生效，所以不会在卡片上方多画东西。
   '.dlr-head{position:sticky;top:-24px;z-index:3;display:flex;flex-direction:column;gap:6px;padding:14px 0 12px;background:var(--dsw-alias-bg-base,#fff);border-bottom:1px solid var(--dsw-alias-border-l2)}',
-  // 顶栏两层：上层「标题 + 右侧控件组」，下层「一行短描述 + 状态行」。
-  // 描述已压到一行（2026-10-05 用户反馈「文字别那么长」），控件组（撤销/保存/总开关）并排在标题行右端，
-  // 与标题同一行、垂直居中——最常规的设置行布局。
-  '.dlr-headTop{display:flex;align-items:center;gap:12px}',
+  // 顶栏两层：上层「标题 + 右列控件」，下层「一行短描述 + 状态行」。
+  // 右列 .dlr-headCtl 就是**两排**：总开关在上、保存控件在下（用户明确要的排法）。
+  // 描述已压到一行，不会再插进两排按钮中间。
+  '.dlr-headTop{display:flex;align-items:flex-start;gap:12px}',
   '.dlr-headText{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}',
-  '.dlr-headActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;flex:none}',
-  // 开关自带的 2px 上边距是给「贴着标题首行」用的；进了控件组要垂直居中
-  '.dlr-headActions .dlr-switch{margin-top:0}',
+  '.dlr-headCtl{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:8px}',
+  '.dlr-headActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}',
   '.dlr-titleRow{display:flex;align-items:center;gap:8px}',
   // 标题显式深色（先给非 light-dark 浏览器一个纯深色回退）；字号提到 16 加粗
   '.dlr-title{color:#101418;color:light-dark(#0f1216,#eef1f4);font-size:16px;line-height:24px;font-weight:700}',
@@ -1437,15 +1436,8 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
               <Badge on={draft.enabled} label={draft.enabled ? L.badgeOn : L.badgeOff} />
             </div>
           </div>
-          {/* 控件组：撤销/保存/总开关并排在标题行右端（保存状态提示也在这行） */}
-          <div className="dlr-headActions">
-            {dirty && <span className="dlr-dirtyHint">{L.dirtyHint}</span>}
-            {saveState === 'fail' && <span className="dlr-fail">{L.saveFailed}</span>}
-            {saveState === 'ok' && <span className="dlr-ok">{L.saved}</span>}
-            {dirty && saveState !== 'saving' && <button type="button" className="dlr-revertBtn" onClick={revert}>{L.revert}</button>}
-            <button type="button" className="dlr-saveBtn" disabled={!writable || !dirty || saveState === 'saving'} onClick={save}>
-              {saveState === 'saving' ? L.saving : L.save}
-            </button>
+          {/* 右列两排：第一排总开关，第二排保存控件 */}
+          <div className="dlr-headCtl">
             <Switch
               checked={draft.enabled}
               disabled={!writable}
@@ -1453,6 +1445,15 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
               title={draft.enabled ? L.badgeOn : L.badgeOff}
               onClick={() => update('enabled', !draft.enabled)}
             />
+            <div className="dlr-headActions">
+              {dirty && <span className="dlr-dirtyHint">{L.dirtyHint}</span>}
+              {saveState === 'fail' && <span className="dlr-fail">{L.saveFailed}</span>}
+              {saveState === 'ok' && <span className="dlr-ok">{L.saved}</span>}
+              {dirty && saveState !== 'saving' && <button type="button" className="dlr-revertBtn" onClick={revert}>{L.revert}</button>}
+              <button type="button" className="dlr-saveBtn" disabled={!writable || !dirty || saveState === 'saving'} onClick={save}>
+                {saveState === 'saving' ? L.saving : L.save}
+              </button>
+            </div>
           </div>
         </div>
         <span className="dlr-desc">{L.desc}</span>
