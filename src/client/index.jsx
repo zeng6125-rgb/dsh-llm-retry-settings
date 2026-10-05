@@ -459,19 +459,19 @@ const useL = () => {
 }
 
 const CSS = [
-  // 卡片最底下那条分隔线已去掉（2026-10-05 用户诉求）；宿主自己的分区已经提供了边界
-  '.dlr-card{padding:0 0 20px;display:flex;flex-direction:column;gap:16px}',
-  // 顶栏吸顶（2026-10-05）：保存/撤销从卡片底部搬到标题行右侧，整条顶栏 sticky 在滚动容器顶部。
+  // 卡片最底下那条分隔线已去掉（2026-10-05 用户诉求）；宿主自己的分区已经提供了边界。
+  // container-type:scroll-state 让顶栏能查询「自己是否已吸住」（Chromium 133+）。
+  '.dlr-card{container-type:scroll-state;padding:0 0 20px;display:flex;flex-direction:column;gap:16px}',
+  // 顶栏吸顶（2026-10-05）：保存/撤销在标题行右侧，整条顶栏 sticky 在滚动容器顶部。
   // 卡片高约 2400px，滚到中段时底部按钮早已不可见——这是用户提的诉求。
-  // 背景必须用设置页内容区同款 token（宿主 .VOzbGW_content 就是 --dsw-alias-bg-base），
-  // 否则吸顶后下面的块会从半透明栏下透出来。
   //
-  // top:-24px 而不是 0：sticky 的偏移是相对滚动容器的**内容盒**，而宿主
-  // `.VOzbGW_options{padding:24px}` 有 24px 内边距 ⇒ 用 0 会在栏顶上方留一条 24px 的缝，
-  // 滚上去的 chips 正好从缝里露出来（用户截图实测）。负偏移让栏顶贴到 padding 盒顶，
-  // 缝就没了；宿主内边距若变小，最多把栏自身 14px 的上内边距吃掉一点，文字不会丢。
-  // 未吸顶时 top 不生效，所以不会在卡片上方多画东西。
-  '.dlr-head{position:sticky;top:-24px;z-index:3;display:flex;flex-direction:column;gap:6px;padding:14px 0 12px;background:var(--dsw-alias-bg-base,#fff);border-bottom:1px solid var(--dsw-alias-border-l2)}',
+  // top:0（不是 -24px）：sticky 的偏移相对滚动容器的内容盒，而宿主 `.VOzbGW_options{padding:24px}`
+  // 有 24px 内边距。用 -24px 能把那条缝顶掉，但代价是吸住时整条顶栏被顶上去 24px、自身内边距被吃掉
+  // ——看起来就像「吸顶时顶栏布局变了」（用户明确反对）。用 0 则吸住位置＝静止位置，顶栏一个像素都不动；
+  // 那条 24px 的缝改由下面 scroll-state 查询在**吸住时**补一块同色背景带盖住，静止时不画任何东西。
+  '.dlr-head{position:sticky;top:0;z-index:3;display:flex;flex-direction:column;gap:6px;padding:14px 0 12px;background:var(--dsw-alias-bg-base,#fff)}',
+  // 只在真正吸住时补缝：不吸时不画，静止态与原来完全一致
+  '@container scroll-state(stuck: top){.dlr-head{box-shadow:0 -24px 0 0 var(--dsw-alias-bg-base,#fff)}}',
   // 顶栏两层：上层「标题 + 右列控件」，下层「一行短描述 + 状态行」。
   // 右列 .dlr-headCtl 就是**两排**：总开关在上、保存控件在下（用户明确要的排法）。
   // 描述已压到一行，不会再插进两排按钮中间。
