@@ -460,8 +460,7 @@ const useL = () => {
 
 const CSS = [
   // 卡片最底下那条分隔线已去掉（2026-10-05 用户诉求）；宿主自己的分区已经提供了边界。
-  // container-type:scroll-state 让顶栏能查询「自己是否已吸住」（Chromium 133+）。
-  '.dlr-card{container-type:scroll-state;padding:0 0 20px;display:flex;flex-direction:column;gap:16px}',
+  '.dlr-card{padding:0 0 20px;display:flex;flex-direction:column;gap:16px}',
   // 顶栏吸顶（2026-10-05）：保存/撤销在标题行右侧，整条顶栏 sticky 在滚动容器顶部。
   // 卡片高约 2400px，滚到中段时底部按钮早已不可见——这是用户提的诉求。
   //
@@ -470,8 +469,9 @@ const CSS = [
   // ——看起来就像「吸顶时顶栏布局变了」（用户明确反对）。用 0 则吸住位置＝静止位置，顶栏一个像素都不动；
   // 那条 24px 的缝改由下面 scroll-state 查询在**吸住时**补一块同色背景带盖住，静止时不画任何东西。
   '.dlr-head{position:sticky;top:0;z-index:3;display:flex;flex-direction:column;gap:6px;padding:14px 0 12px;background:var(--dsw-alias-bg-base,#fff)}',
-  // 只在真正吸住时补缝：不吸时不画，静止态与原来完全一致
-  '@container scroll-state(stuck: top){.dlr-head{box-shadow:0 -24px 0 0 var(--dsw-alias-bg-base,#fff)}}',
+  // 真正吸住时（JS 置 data-stuck=1）补一块同色背景带，盖住宿主 24px 内边距造成的那条缝；
+  // 未吸住时不画任何东西，静止态与原来完全一致。
+  '.dlr-head[data-stuck="1"]{box-shadow:0 -24px 0 0 var(--dsw-alias-bg-base,#fff)}',
   // 顶栏两层：上层「标题 + 右列控件」，下层「一行短描述 + 状态行」。
   // 右列 .dlr-headCtl 就是**两排**：总开关在上、保存控件在下（用户明确要的排法）。
   // 描述已压到一行，不会再插进两排按钮中间。
@@ -1392,6 +1392,28 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
     if (!card) return
     let target = null
     let prev = ''
+    // —— 吸顶补缝（2026-10-05）——
+    // 宿主滚动容器有 24px 内边距，sticky 的 top:0 相对内容盒 ⇒ 吸住时顶栏上方会留一条 24px 的缝，
+    // 滚上去的内容从缝里露出来。这里在**真正吸住时**给顶栏加 data-stuck，由 CSS 补一块同色背景带。
+    // 不用 `@container scroll-state(stuck: top)`：本机运行时不支持，实测缝照漏（用户截图）。
+    const head = card.querySelector('.dlr-head')
+    let scroller = null
+    let ticking = false
+    const syncStuck = () => {
+      ticking = false
+      if (!head || !scroller || !scroller.isConnected) return
+      const padTop = parseFloat(getComputedStyle(scroller).paddingTop) || 0
+      const contentTop = scroller.getBoundingClientRect().top + padTop
+      // 顶栏贴住内容盒顶、且确实滚动过 ⇒ 吸住；卡片还在下方时（没滚到）不补，避免盖住上面的内容
+      const stuck = scroller.scrollTop > 0 && head.getBoundingClientRect().top <= contentTop + 0.5
+      if (stuck !== (head.dataset.stuck === '1')) head.dataset.stuck = stuck ? '1' : '0'
+    }
+    const onScroll = () => {
+      if (ticking) return
+      ticking = true
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(syncStuck)
+      else syncStuck()
+    }
     const apply = () => {
       if (target && target.isConnected) return
       let el = card.parentElement
@@ -1402,26 +1424,40 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
           el.scrollHeight > el.clientHeight + 2
         if (scrolls) {
           // 宿主若已自行内联声明 will-change，就不覆盖它的选择
-          if (el.style.willChange !== '') return
+          if (el.style.willChange !== '') { scroller = el; return }
           prev = el.style.willChange
           el.style.willChange = 'scroll-position'
           target = el
+          scroller = el
           return
         }
         el = el.parentElement
       }
     }
     apply()
+    if (scroller) {
+      scroller.addEventListener('scroll', onScroll, { passive: true })
+      scroller.__dlrScrollBound = true
+      syncStuck()
+    }
     // 内容长高（加覆盖行 / 展开日志）之后才变成可滚的情况：尺寸变化时再找一次
     let ro = null
     try {
       if (typeof ResizeObserver !== 'undefined') {
-        ro = new ResizeObserver(() => apply())
+        ro = new ResizeObserver(() => {
+          apply()
+          if (scroller && !scroller.__dlrScrollBound) {
+            scroller.addEventListener('scroll', onScroll, { passive: true })
+            scroller.__dlrScrollBound = true
+          }
+          syncStuck()
+        })
         ro.observe(card)
       }
     } catch { /* 无 ResizeObserver 的内核：只在挂载时应用一次 */ }
     return () => {
       try { if (ro) ro.disconnect() } catch { /* ignore */ }
+      try { if (scroller) scroller.removeEventListener('scroll', onScroll) } catch { /* ignore */ }
       try { if (target && target.isConnected) target.style.willChange = prev } catch { /* ignore */ }
     }
   }, [])
