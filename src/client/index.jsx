@@ -479,8 +479,16 @@ const CSS = [
   '.dlr-knob{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .15s}',
   '.dlr-switch[aria-checked=true] .dlr-knob{transform:translateX(18px)}',
 
-  '.dlr-body{display:flex;flex-direction:column;gap:16px}',
-  '.dlr-section{display:flex;flex-direction:column;gap:12px}',
+  '.dlr-body{display:flex;flex-direction:column;gap:12px}',
+  // 「按块分类」（2026-10-05）：一个主题一个 .dlr-block（统一边框/圆角/内边距），
+  // 块头 = 标题 + 右侧操作，块体 = 内容。此前字段、错误码、覆盖规则、退避曲线全挤在
+  // 同一个 .dlr-section 里，彼此没有视觉边界；分块后所有块左边界与间距一致，才对得齐。
+  '.dlr-block{display:flex;flex-direction:column;gap:12px;padding:14px 16px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px}',
+  '.dlr-blockHead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}',
+  // 块头里的操作控件（刷新/开关/打开日志）统一靠右，标题永远贴左边界
+  '.dlr-blockHead .dlr-miniBtn,.dlr-blockHead .dlr-switch{margin-left:auto}',
+  '.dlr-blockNote{color:var(--dsw-alias-label-caption);font-size:12px;line-height:17px}',
+  '.dlr-blockBody{display:flex;flex-direction:column;gap:12px}',
   '.dlr-disabled{opacity:.55;pointer-events:none}',
   '.dlr-switchRow{display:flex;align-items:flex-start;gap:10px}',
   '.dlr-switchText{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}',
@@ -527,11 +535,7 @@ const CSS = [
   '.dlr-chipClear{height:auto;padding:0;border:none;background:transparent;color:var(--dsw-alias-state-danger,#d54545);font-size:12px;cursor:pointer}',
   '.dlr-chipClear:hover{text-decoration:underline}',
 
-  '.dlr-logRow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px}',
-  '.dlr-logText{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}',
   '.dlr-logPath{color:var(--dsw-alias-label-caption);font-size:12px;line-height:17px;font-family:ui-monospace,Consolas,monospace;word-break:break-all}',
-  '.dlr-logBtn{flex:none;height:28px;padding:0 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:13px;cursor:pointer}',
-  '.dlr-logBtn:hover{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-state-business-primary)}',
   '.dlr-actions{display:flex;align-items:center;gap:8px;justify-content:flex-end}',
   '.dlr-saveBtn{height:30px;padding:0 18px;border:none;border-radius:6px;background:var(--dsw-alias-state-business-primary);color:#fff;font-size:13px;cursor:pointer}',
   '.dlr-saveBtn:disabled{opacity:.5;cursor:default}',
@@ -554,9 +558,7 @@ const CSS = [
   '.dlr-ovDel:disabled{opacity:.5;cursor:default}',
   '.dlr-ovDel:not(:disabled):hover{border-color:var(--dsw-alias-label-critical,#d05a5a);color:var(--dsw-alias-label-critical,#d05a5a)}',
   // —— 重试观测面板（2026-10-05 UI 优化）——
-  // 面板整体收进一个浅容器，跟上面的设置项在视觉上分开；标题行右侧是操作按钮。
-  '.dlr-panel{display:flex;flex-direction:column;gap:12px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px}',
-  '.dlr-statsHead{display:flex;align-items:center;justify-content:space-between;gap:8px}',
+  // 面板整体就是一个 .dlr-block（与上面各块同一套边框/内边距/左边界），块头右侧是操作按钮。
   '.dlr-miniBtn{flex:none;background:transparent;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px;transition:border-color .12s,color .12s}',
   '.dlr-miniBtn:hover{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-state-business-primary)}',
   '.dlr-statsGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px}',
@@ -1130,94 +1132,92 @@ const StatsPanel = memo(function StatsPanel({ logPath, live, lang }) {
   const pct = (value, max) => (max > 0 ? Math.max(3, Math.round((value / max) * 100)) + '%' : '0%')
   const recent = stats ? stats.recent.slice(-8).reverse() : []
   return (
-    <div className="dlr-section">
-      <div className="dlr-panel">
-        <div className="dlr-statsHead">
-          <span className="dlr-groupTitle">{L.groupStats}</span>
-          <button type="button" className="dlr-miniBtn" onClick={() => void load()}>
-            {state.status === 'loading' ? L.statsLoading : L.statsRefresh}
-          </button>
+    <div className="dlr-block">
+      <div className="dlr-blockHead">
+        <span className="dlr-groupTitle">{L.groupStats}</span>
+        <button type="button" className="dlr-miniBtn" onClick={() => void load()}>
+          {state.status === 'loading' ? L.statsLoading : L.statsRefresh}
+        </button>
+      </div>
+      {state.status === 'stale' && <span className="dlr-fail">{L.statsStale}</span>}
+      {state.status === 'error' && <span className="dlr-fail">{L.statsUnavailable(state.error)}</span>}
+      {stats && (
+        <div className="dlr-statsGrid">
+          <div className="dlr-statCell"><span className="dlr-statVal">{stats.retries}</span><span className="dlr-statLabel">{L.statsRetries}</span></div>
+          <div className="dlr-statCell isInfo"><span className="dlr-statVal">{stats.continues}</span><span className="dlr-statLabel">{L.statsContinues}</span></div>
+          <div className="dlr-statCell isWarn"><span className="dlr-statVal">{stats.capped}</span><span className="dlr-statLabel">{L.statsCapped}</span></div>
+          <div className="dlr-statCell isMuted"><span className="dlr-statVal">{stats.skipped}</span><span className="dlr-statLabel">{L.statsSkipped}</span></div>
         </div>
-        {state.status === 'stale' && <span className="dlr-fail">{L.statsStale}</span>}
-        {state.status === 'error' && <span className="dlr-fail">{L.statsUnavailable(state.error)}</span>}
-        {stats && (
-          <div className="dlr-statsGrid">
-            <div className="dlr-statCell"><span className="dlr-statVal">{stats.retries}</span><span className="dlr-statLabel">{L.statsRetries}</span></div>
-            <div className="dlr-statCell isInfo"><span className="dlr-statVal">{stats.continues}</span><span className="dlr-statLabel">{L.statsContinues}</span></div>
-            <div className="dlr-statCell isWarn"><span className="dlr-statVal">{stats.capped}</span><span className="dlr-statLabel">{L.statsCapped}</span></div>
-            <div className="dlr-statCell isMuted"><span className="dlr-statVal">{stats.skipped}</span><span className="dlr-statLabel">{L.statsSkipped}</span></div>
+      )}
+      {liveModels.length > 0 && (
+        <div className="dlr-modelBox">
+          <span className="dlr-note">{L.statsModels}</span>
+          <div className="dlr-modelChips">
+            {liveModels.slice(0, 6).map((model) => (
+              <span className="dlr-modelChip" key={model} title={model}>{model}</span>
+            ))}
+            {liveModels.length > 6 && (
+              <span className="dlr-modelChip more" title={liveModels.slice(6).join('、')}>+{liveModels.length - 6}</span>
+            )}
           </div>
-        )}
-        {liveModels.length > 0 && (
-          <div className="dlr-modelBox">
-            <span className="dlr-note">{L.statsModels}</span>
-            <div className="dlr-modelChips">
-              {liveModels.slice(0, 6).map((model) => (
-                <span className="dlr-modelChip" key={model} title={model}>{model}</span>
-              ))}
-              {liveModels.length > 6 && (
-                <span className="dlr-modelChip more" title={liveModels.slice(6).join('、')}>+{liveModels.length - 6}</span>
-              )}
-            </div>
-          </div>
-        )}
-        {idle && <span className="dlr-note">{L.statsEmpty}</span>}
-        {stats && !idle && (
-          <div className="dlr-statsCols">
-            <div className="dlr-statsCol">
-              <span className="dlr-colTitle">{L.statsByCode}</span>
-              {codes.length === 0 && <span className="dlr-note">{L.statsEmpty}</span>}
-              {codes.map(([key, count]) => (
-                <span className="dlr-barRow" key={key}>
-                  <span className="dlr-bar" style={{ width: pct(count, maxCode) }} aria-hidden="true" />
-                  <code className="dlr-barKey">{key}</code>
-                  <span className="dlr-barVal">{count}</span>
-                </span>
-              ))}
-            </div>
-            <div className="dlr-statsCol">
-              <span className="dlr-colTitle">{L.statsByProvider}</span>
-              {providers.length === 0 && <span className="dlr-note">{L.statsEmpty}</span>}
-              {providers.map(([key, count]) => {
-                const label = providerNames.get(key) || key
-                return (
-                  <span className="dlr-barRow" key={key}>
-                    <span className="dlr-bar" style={{ width: pct(count, maxProvider) }} aria-hidden="true" />
-                    <span className="dlr-barKey" title={label}>{label}</span>
-                    <span className="dlr-barVal">{count}</span>
-                  </span>
-                )
-              })}
-            </div>
-          </div>
-        )}
-        {stats && !idle && (
-          <div className="dlr-recent">
-            <span className="dlr-colTitle">{L.statsRecent}</span>
-            {recent.length === 0 && <span className="dlr-note">{L.statsEmpty}</span>}
-            {recent.map((entry, i) => (
-              <span className="dlr-recentRow" key={i}>
-                <span className="dlr-time">{fmtClock(entry.t)}</span>
-                <span className={'dlr-kind ' + entry.kind}>{kinds[entry.kind] || entry.kind}</span>
-                {entry.code ? <code>{entry.code}</code> : <span />}
-                <span title={entryTarget(entry)}>{entryTarget(entry)}</span>
-                <span className="dlr-time">{typeof entry.delayMs === 'number' ? fmtMs(entry.delayMs) : ''}</span>
+        </div>
+      )}
+      {idle && <span className="dlr-note">{L.statsEmpty}</span>}
+      {stats && !idle && (
+        <div className="dlr-statsCols">
+          <div className="dlr-statsCol">
+            <span className="dlr-colTitle">{L.statsByCode}</span>
+            {codes.length === 0 && <span className="dlr-note">{L.statsEmpty}</span>}
+            {codes.map(([key, count]) => (
+              <span className="dlr-barRow" key={key}>
+                <span className="dlr-bar" style={{ width: pct(count, maxCode) }} aria-hidden="true" />
+                <code className="dlr-barKey">{key}</code>
+                <span className="dlr-barVal">{count}</span>
               </span>
             ))}
           </div>
-        )}
-        <div className="dlr-statsFoot">
-          <span className="dlr-note">
-            {state.data
-              ? L.statsDiag(state.data.diagTag) + (stats ? ' · ' + L.statsUptime((state.data.now - stats.startedAt) / 60000) : '')
-              : logPath || L.logFile}
-          </span>
-          <button type="button" className="dlr-miniBtn" onClick={toggleTail}>
-            {tail !== null ? L.statsLogHide : L.statsLogTail}
-          </button>
+          <div className="dlr-statsCol">
+            <span className="dlr-colTitle">{L.statsByProvider}</span>
+            {providers.length === 0 && <span className="dlr-note">{L.statsEmpty}</span>}
+            {providers.map(([key, count]) => {
+              const label = providerNames.get(key) || key
+              return (
+                <span className="dlr-barRow" key={key}>
+                  <span className="dlr-bar" style={{ width: pct(count, maxProvider) }} aria-hidden="true" />
+                  <span className="dlr-barKey" title={label}>{label}</span>
+                  <span className="dlr-barVal">{count}</span>
+                </span>
+              )
+            })}
+          </div>
         </div>
-        {tail !== null && <pre className="dlr-logTail">{tail === '' ? L.statsLogEmpty : tail}</pre>}
+      )}
+      {stats && !idle && (
+        <div className="dlr-recent">
+          <span className="dlr-colTitle">{L.statsRecent}</span>
+          {recent.length === 0 && <span className="dlr-note">{L.statsEmpty}</span>}
+          {recent.map((entry, i) => (
+            <span className="dlr-recentRow" key={i}>
+              <span className="dlr-time">{fmtClock(entry.t)}</span>
+              <span className={'dlr-kind ' + entry.kind}>{kinds[entry.kind] || entry.kind}</span>
+              {entry.code ? <code>{entry.code}</code> : <span />}
+              <span title={entryTarget(entry)}>{entryTarget(entry)}</span>
+              <span className="dlr-time">{typeof entry.delayMs === 'number' ? fmtMs(entry.delayMs) : ''}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="dlr-statsFoot">
+        <span className="dlr-note">
+          {state.data
+            ? L.statsDiag(state.data.diagTag) + (stats ? ' · ' + L.statsUptime((state.data.now - stats.startedAt) / 60000) : '')
+            : logPath || L.logFile}
+        </span>
+        <button type="button" className="dlr-miniBtn" onClick={toggleTail}>
+          {tail !== null ? L.statsLogHide : L.statsLogTail}
+        </button>
       </div>
+      {tail !== null && <pre className="dlr-logTail">{tail === '' ? L.statsLogEmpty : tail}</pre>}
     </div>
   )
 })
@@ -1428,8 +1428,11 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
       </div>
 
       <div className="dlr-body">
-        <div className={'dlr-section' + (draft.enabled ? '' : ' dlr-disabled')}>
-          <span className="dlr-groupTitle">{L.groupBehavior}</span>
+        {/* ① 重试行为：次数/退避/抖动 + 退避曲线（曲线画的就是这几个字段，放同一块里） */}
+        <div className={'dlr-block' + (draft.enabled ? '' : ' dlr-disabled')}>
+          <div className="dlr-blockHead">
+            <span className="dlr-groupTitle">{L.groupBehavior}</span>
+          </div>
           <div className="dlr-grid">
             <NumberField label={L.fieldRetries} hint={L.fieldRetriesHint} value={draft.maxRetries}
               min={0} step={1} suffix={L.suffixTimes}
@@ -1450,8 +1453,19 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
               disabled={!writable} dirty={draft.jitterRatio !== current.jitterRatio}
               onChange={(n) => update('jitterRatio', n)} onEnter={save} />
           </div>
+          <BackoffViz
+            maxRetries={draft.maxRetries}
+            initialDelayMs={draft.initialDelayMs}
+            maxDelayMs={draft.maxDelayMs}
+            jitterRatio={draft.jitterRatio}
+          />
+        </div>
 
-          <span className="dlr-groupTitle">{L.groupCodes}</span>
+        {/* ② 错误码：哪些错误值得重试 */}
+        <div className={'dlr-block' + (draft.enabled ? '' : ' dlr-disabled')}>
+          <div className="dlr-blockHead">
+            <span className="dlr-groupTitle">{L.groupCodes}</span>
+          </div>
           <div className="dlr-chipOuter">
             <CodeChips
               selected={draft.retryableCodes}
@@ -1467,26 +1481,25 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
             )}
             <span className="dlr-chipHint">{L.fieldCodesHint}</span>
           </div>
+        </div>
 
-          <span className="dlr-groupTitle">{L.groupOverrides}</span>
+        {/* ③ 覆盖规则：按 provider/model 单独设策略 */}
+        <div className={'dlr-block' + (draft.enabled ? '' : ' dlr-disabled')}>
+          <div className="dlr-blockHead">
+            <span className="dlr-groupTitle">{L.groupOverrides}</span>
+          </div>
           <OverridesEditor
             rows={draft.overrides}
             disabled={!writable}
             onChange={(rows) => update('overrides', rows)}
           />
-
-          <BackoffViz
-            maxRetries={draft.maxRetries}
-            initialDelayMs={draft.initialDelayMs}
-            maxDelayMs={draft.maxDelayMs}
-            jitterRatio={draft.jitterRatio}
-          />
         </div>
 
-        {/* 自动续写与重试是两条独立通路：max-tokens 不是错误，重试策略永远碰不到它，
+        {/* ④ 自动续写：与重试是两条独立通路——max-tokens 不是错误，重试策略永远碰不到它，
             所以这里的开关不受上方 enabled 影响，也不随上方一起置灰。 */}
-        <div className="dlr-section">
-          <div className="dlr-switchRow">
+        <div className="dlr-block">
+          <div className="dlr-blockHead">
+            <span className="dlr-groupTitle">{L.groupContinue}</span>
             <Switch
               checked={draft.autoContinue}
               disabled={!writable}
@@ -1494,12 +1507,9 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
               title={draft.autoContinue ? L.switchOn : L.switchOff}
               onClick={() => update('autoContinue', !draft.autoContinue)}
             />
-            <div className="dlr-switchText">
-              <span className="dlr-groupTitle">{L.groupContinue}</span>
-              <span className="dlr-note">{L.continueHint}</span>
-            </div>
           </div>
-          <div className={'dlr-section' + (draft.autoContinue ? '' : ' dlr-disabled')}>
+          <span className="dlr-note">{L.continueHint}</span>
+          <div className={'dlr-blockBody' + (draft.autoContinue ? '' : ' dlr-disabled')}>
             <div className="dlr-grid">
               <NumberField label={L.fieldMaxContinue} hint={L.fieldMaxContinueHint} value={draft.maxContinuations}
                 min={0} step={1} suffix={L.suffixTimes}
@@ -1563,16 +1573,16 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
         <StatsPanel logPath={logAbsolute()} live={hostFresh} lang={detectLang()} />
       </div>
 
-      {/* 排错日志：按钮用宿主给出的绝对路径调壳层 openPath 打开日志目录；
+      {/* ⑥ 排错日志：按钮用宿主给出的绝对路径调壳层 openPath 打开日志目录；
           宿主路径未到位时退化为复制路径。 */}
-      <div className="dlr-logRow">
-        <div className="dlr-logText">
+      <div className="dlr-block">
+        <div className="dlr-blockHead">
           <span className="dlr-groupTitle">{L.logTitle}</span>
-          <code className="dlr-logPath">{logAbsolute() !== '' ? logAbsolute() : L.logFile}</code>
+          <button type="button" className="dlr-miniBtn" onClick={openLog}>{L.logOpen}</button>
         </div>
+        <code className="dlr-logPath">{logAbsolute() !== '' ? logAbsolute() : L.logFile}</code>
         {logMsg === 'copied' && <span className="dlr-note">{L.logCopied}</span>}
         {logMsg === 'manual' && <span className="dlr-fail">{L.logManual}</span>}
-        <button type="button" className="dlr-logBtn" onClick={openLog}>{L.logOpen}</button>
       </div>
       <div className="dlr-actions">
         {dirty && <span className="dlr-dirtyHint">{L.dirtyHint}</span>}
