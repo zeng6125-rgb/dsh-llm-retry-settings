@@ -471,12 +471,13 @@ const CSS = [
   // 缝就没了；宿主内边距若变小，最多把栏自身 14px 的上内边距吃掉一点，文字不会丢。
   // 未吸顶时 top 不生效，所以不会在卡片上方多画东西。
   '.dlr-head{position:sticky;top:-24px;z-index:3;display:flex;flex-direction:column;gap:6px;padding:14px 0 12px;background:var(--dsw-alias-bg-base,#fff);border-bottom:1px solid var(--dsw-alias-border-l2)}',
-  // 顶栏分两层：上层「标题/描述 + 总开关」，下层「状态行 + 保存控件」。
-  // 保存控件必须放在**整行宽**的状态行里，才能 margin-left:auto 顶到卡片右边缘、与开关同一条竖线；
-  // 留在文字列内的话右边界会被开关列挤掉 68px（用户实测反馈「不对」）。
+  // 顶栏两层：上层「标题 + 右列控件」，下层「描述 + 状态」整行宽。
+  // 右列 .dlr-headCtl 把总开关与保存控件**上下紧挨**排成一列（用户诉求：按钮两行、不被文字卡住）
+  // ——此前开关在标题行、保存在状态行，中间夹着描述文字，看着既不对齐也被文字卡住。
   '.dlr-headTop{display:flex;align-items:flex-start;gap:12px}',
-  '.dlr-headActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;flex:none;margin-left:auto}',
   '.dlr-headText{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}',
+  '.dlr-headCtl{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:8px}',
+  '.dlr-headActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}',
   '.dlr-titleRow{display:flex;align-items:center;gap:8px}',
   // 标题显式深色（先给非 light-dark 浏览器一个纯深色回退）；字号提到 16 加粗
   '.dlr-title{color:#101418;color:light-dark(#0f1216,#eef1f4);font-size:16px;line-height:24px;font-weight:700}',
@@ -488,8 +489,6 @@ const CSS = [
   '.dlr-badge.off i{background:var(--dsw-alias-label-caption)}',
   '.dlr-desc{color:#24292f;color:light-dark(#24292f,#ccd3da);font-size:13px;line-height:19px}',
   '.dlr-status{color:var(--dsw-alias-label-caption);font-size:12px;line-height:17px}',
-  // 状态行 + 右侧保存控件：整行宽，保存控件右对齐到卡片右边缘（与总开关同一竖线）
-  '.dlr-statusRow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:22px}',
   '.dlr-switch{width:44px;height:26px;flex:none;background:var(--dsw-alias-interactive-bg-hover);border:none;border-radius:999px;position:relative;cursor:pointer;transition:background .15s;padding:0;margin-top:2px}',
   '.dlr-switch[aria-checked=true]{background:var(--dsw-alias-state-business-primary)}',
   '.dlr-switch:disabled{opacity:.5;cursor:default}',
@@ -1435,30 +1434,29 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
               <span className="dlr-title">{L.title}</span>
               <Badge on={draft.enabled} label={draft.enabled ? L.badgeOn : L.badgeOff} />
             </div>
-            <span className="dlr-desc">{L.desc}</span>
           </div>
-          <Switch
-            checked={draft.enabled}
-            disabled={!writable}
-            label={L.title}
-            title={draft.enabled ? L.badgeOn : L.badgeOff}
-            onClick={() => update('enabled', !draft.enabled)}
-          />
-        </div>
-        {/* 状态行整行宽：状态文字在左，保存控件右对齐到卡片右边缘（与上面的开关同一条竖线）。
-            吸顶后随时可存，不必滚到卡片底部。 */}
-        <div className="dlr-statusRow">
-          <span className="dlr-status">{status}</span>
-          <div className="dlr-headActions">
-            {dirty && <span className="dlr-dirtyHint">{L.dirtyHint}</span>}
-            {saveState === 'fail' && <span className="dlr-fail">{L.saveFailed}</span>}
-            {saveState === 'ok' && <span className="dlr-ok">{L.saved}</span>}
-            {dirty && saveState !== 'saving' && <button type="button" className="dlr-revertBtn" onClick={revert}>{L.revert}</button>}
-            <button type="button" className="dlr-saveBtn" disabled={!writable || !dirty || saveState === 'saving'} onClick={save}>
-              {saveState === 'saving' ? L.saving : L.save}
-            </button>
+          {/* 右列：总开关在上、保存控件紧挨在下，两者之间不夹文字 */}
+          <div className="dlr-headCtl">
+            <Switch
+              checked={draft.enabled}
+              disabled={!writable}
+              label={L.title}
+              title={draft.enabled ? L.badgeOn : L.badgeOff}
+              onClick={() => update('enabled', !draft.enabled)}
+            />
+            <div className="dlr-headActions">
+              {dirty && <span className="dlr-dirtyHint">{L.dirtyHint}</span>}
+              {saveState === 'fail' && <span className="dlr-fail">{L.saveFailed}</span>}
+              {saveState === 'ok' && <span className="dlr-ok">{L.saved}</span>}
+              {dirty && saveState !== 'saving' && <button type="button" className="dlr-revertBtn" onClick={revert}>{L.revert}</button>}
+              <button type="button" className="dlr-saveBtn" disabled={!writable || !dirty || saveState === 'saving'} onClick={save}>
+                {saveState === 'saving' ? L.saving : L.save}
+              </button>
+            </div>
           </div>
         </div>
+        <span className="dlr-desc">{L.desc}</span>
+        <span className="dlr-status">{status}</span>
         {ready && !hostFresh && <span className="dlr-fail">{L.hostStale}</span>}
       </div>
 
