@@ -219,7 +219,12 @@ const ZH = {
   statsKindContinue: '续写',
   statsKindCap: '触顶',
   statsKindSkip: '跳过',
-  statsUptime: (mins) => `已运行 ${mins} 分钟`,
+  statsUptime: (mins) => {
+    const m = Math.max(0, Math.round(mins))
+    if (m < 60) return `已运行 ${m} 分钟`
+    if (m < 1440) return `已运行 ${Math.floor(m / 60)} 小时 ${m % 60} 分`
+    return `已运行 ${Math.floor(m / 1440)} 天 ${Math.floor((m % 1440) / 60)} 小时`
+  },
   statsModels: '当前会话模型（覆盖规则按它匹配）',
   statsDiag: (tag) => `宿主构建 ${tag}`,
   statsLogTail: '查看日志尾部',
@@ -370,7 +375,12 @@ const EN = {
   statsKindContinue: 'continue',
   statsKindCap: 'cap',
   statsKindSkip: 'skip',
-  statsUptime: (mins) => `up ${mins} min`,
+  statsUptime: (mins) => {
+    const m = Math.max(0, Math.round(mins))
+    if (m < 60) return `up ${m} min`
+    if (m < 1440) return `up ${Math.floor(m / 60)}h ${m % 60}m`
+    return `up ${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`
+  },
   statsModels: 'Live session models (what the override rules match)',
   statsDiag: (tag) => `host build ${tag}`,
   statsLogTail: 'Show log tail',
@@ -543,16 +553,47 @@ const CSS = [
   '.dlr-ovDel{background:transparent;border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.15));color:inherit;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:12px}',
   '.dlr-ovDel:disabled{opacity:.5;cursor:default}',
   '.dlr-ovDel:not(:disabled):hover{border-color:var(--dsw-alias-label-critical,#d05a5a);color:var(--dsw-alias-label-critical,#d05a5a)}',
+  // —— 重试观测面板（2026-10-05 UI 优化）——
+  // 面板整体收进一个浅容器，跟上面的设置项在视觉上分开；标题行右侧是操作按钮。
+  '.dlr-panel{display:flex;flex-direction:column;gap:12px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px}',
   '.dlr-statsHead{display:flex;align-items:center;justify-content:space-between;gap:8px}',
-  '.dlr-statsGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}',
-  '.dlr-statCell{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-fill-secondary,rgba(0,0,0,.04))}',
-  '.dlr-statVal{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}',
-  '.dlr-statLabel{font-size:11px;color:var(--dsw-alias-label-secondary,#8a8a8a)}',
-  '.dlr-statsCols{display:flex;gap:16px;flex-wrap:wrap}',
-  '.dlr-statsCols > .dlr-statsCol{display:flex;flex-direction:column;gap:2px;min-width:140px;flex:1 1 160px}',
-  '.dlr-statsList{display:flex;flex-direction:column;gap:2px}',
-  '.dlr-statRow,.dlr-recentRow{display:flex;align-items:baseline;gap:8px;font-size:12px;font-variant-numeric:tabular-nums}',
-  '.dlr-statKey{color:var(--dsw-alias-label-secondary,#8a8a8a)}',
+  '.dlr-miniBtn{flex:none;background:transparent;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px;transition:border-color .12s,color .12s}',
+  '.dlr-miniBtn:hover{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-state-business-primary)}',
+  '.dlr-statsGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px}',
+  '.dlr-statCell{display:flex;flex-direction:column;gap:2px;padding:9px 11px;border-radius:8px;background:var(--dsw-alias-fill-secondary,rgba(0,0,0,.04))}',
+  '.dlr-statVal{font-size:19px;line-height:24px;font-weight:600;font-variant-numeric:tabular-nums}',
+  '.dlr-statLabel{font-size:11px;line-height:15px;color:var(--dsw-alias-label-secondary,#8a8a8a)}',
+  // 计数按语义上色：续写=业务蓝，触顶/让位=提醒色与弱化色
+  '.dlr-statCell.isInfo .dlr-statVal{color:var(--dsw-alias-state-business-primary)}',
+  '.dlr-statCell.isWarn .dlr-statVal{color:var(--dsw-alias-state-warn,#c78421)}',
+  '.dlr-statCell.isMuted .dlr-statVal{color:var(--dsw-alias-label-tertiary,#a8a8a8)}',
+  // 当前会话模型：一行长句改成可换行的 chip，长名省略号 + title 看全，双击可整段选中复制
+  '.dlr-modelBox{display:flex;flex-direction:column;gap:6px}',
+  '.dlr-modelChips{display:flex;flex-wrap:wrap;gap:6px}',
+  '.dlr-modelChip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:1px 8px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-fill-secondary,rgba(0,0,0,.04));font-family:ui-monospace,Consolas,monospace;font-size:11px;line-height:18px;user-select:all}',
+  '.dlr-modelChip.more{color:var(--dsw-alias-label-secondary);font-family:inherit}',
+  '.dlr-statsCols{display:flex;gap:18px;flex-wrap:wrap}',
+  '.dlr-statsCols > .dlr-statsCol{display:flex;flex-direction:column;gap:3px;min-width:160px;flex:1 1 200px}',
+  '.dlr-colTitle{color:var(--dsw-alias-label-caption);font-size:11px;line-height:15px;letter-spacing:.3px;text-transform:uppercase}',
+  // 占比条：行内绝对定位的浅色块，文字层压在它上面（各子元素 position:relative）
+  '.dlr-barRow{position:relative;display:flex;align-items:center;gap:8px;padding:2px 6px;border-radius:4px;font-size:12px;line-height:18px;font-variant-numeric:tabular-nums}',
+  '.dlr-barRow > *{position:relative}',
+  '.dlr-bar{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--dsw-alias-state-business-primary);opacity:.12;pointer-events:none}',
+  '.dlr-barKey{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.dlr-barVal{flex:none;color:var(--dsw-alias-label-secondary,#8a8a8a)}',
+  // 最近记录：定宽网格对齐（时刻 | 类型 | 错误码 | provider/model | 退避），行间细分隔线。
+  // 列宽必须**定宽**：每行是各自独立的 grid，用 auto/minmax 会因内容不同逐行错位
+  // （实测「10-04 12:04」那行把后面所有列推右 40px）。时间列按跨天格式 MM-DD HH:MM 留宽。
+  '.dlr-recent{display:flex;flex-direction:column;gap:1px}',
+  '.dlr-recentRow{display:grid;grid-template-columns:78px 62px 110px minmax(0,1fr) 46px;gap:8px;align-items:center;padding:3px 6px;border-radius:4px;font-size:12px;line-height:18px;font-variant-numeric:tabular-nums}',
+  '.dlr-recentRow + .dlr-recentRow{border-top:1px solid var(--dsw-alias-border-l2)}',
+  '.dlr-recentRow > span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.dlr-kind{display:block;padding:0 7px;border-radius:999px;background:var(--dsw-alias-fill-secondary,rgba(0,0,0,.05));color:var(--dsw-alias-label-secondary);font-size:11px;line-height:17px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.dlr-kind.retry{background:rgba(199,132,33,.14);color:var(--dsw-alias-state-warn,#c78421)}',
+  '.dlr-kind.continue{background:rgba(59,130,246,.14);color:var(--dsw-alias-state-business-primary)}',
+  '.dlr-kind.cap{background:rgba(199,132,33,.14);color:var(--dsw-alias-state-warn,#c78421)}',
+  '.dlr-time{color:var(--dsw-alias-label-secondary,#8a8a8a)}',
+  '.dlr-statsFoot{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}',
   '.dlr-logTail{max-height:220px;overflow:auto;overscroll-behavior:contain;contain:content;margin:0;padding:8px;border-radius:6px;background:var(--dsw-alias-fill-secondary,rgba(0,0,0,.04));font-family:ui-monospace,Consolas,monospace;font-size:11px;white-space:pre-wrap;word-break:break-all}',
 ].join('')
 
@@ -819,12 +860,29 @@ const STATS_ROUTE = '/dsh-llm-retry-settings/stats'
 const LOG_ROUTE = '/dsh-llm-retry-settings/log'
 
 const fmtMs = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(ms % 1000 === 0 ? 0 : 1)}s` : `${Math.round(ms)}ms`)
-/** 时间格式化器只建一次（面板每次重渲染最多 8 行，别再逐行走 toLocaleTimeString）。 */
-const CLOCK_FMT = typeof Intl !== 'undefined' && typeof Intl.DateTimeFormat === 'function' ? new Intl.DateTimeFormat() : null
+/**
+ * 时间格式化器只建一次（面板每次重渲染最多 8 行，别再逐行走 toLocaleTimeString）。
+ * 必须显式给「时:分:秒」——`new Intl.DateTimeFormat()` 的默认选项只有年月日，
+ * 最近记录里几行会显示成同一个日期，等于没有时间信息（2026-10-05 修）。
+ */
+const CLOCK_FMT = typeof Intl !== 'undefined' && typeof Intl.DateTimeFormat === 'function'
+  ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+  : null
+const CLOCK_MIN_FMT = typeof Intl !== 'undefined' && typeof Intl.DateTimeFormat === 'function'
+  ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
+  : null
+const DAY_FMT = typeof Intl !== 'undefined' && typeof Intl.DateTimeFormat === 'function'
+  ? new Intl.DateTimeFormat(undefined, { month: '2-digit', day: '2-digit' })
+  : null
 const fmtClock = (t) => {
   try {
     const date = new Date(t)
-    return CLOCK_FMT ? CLOCK_FMT.format(date) : date.toLocaleTimeString()
+    if (!CLOCK_FMT) return date.toLocaleTimeString()
+    const today = new Date()
+    const sameDay = date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth() && date.getDate() === today.getDate()
+    // 当天只给「时:分:秒」；跨天的记录补「月-日 时:分」（列宽按这个更长的情况留）
+    if (sameDay || !DAY_FMT) return CLOCK_FMT.format(date)
+    return DAY_FMT.format(date) + ' ' + (CLOCK_MIN_FMT ? CLOCK_MIN_FMT.format(date) : '')
   } catch (error) {
     return '-'
   }
@@ -1066,78 +1124,100 @@ const StatsPanel = memo(function StatsPanel({ logPath, live, lang }) {
   // 一条事件都没有时不铺两列空表和空记录区，整个面板收成 4 个计数 + 一行提示
   const idle = !!stats && stats.recent.length === 0 && stats.retries === 0 && stats.continues === 0
     && stats.capped === 0 && stats.skipped === 0
+  // 占比条：以本列最大值为满格；极小值也留 3% 宽度，避免「有 1 次却看不见条」
+  const maxCode = codes.length > 0 ? codes[0][1] : 0
+  const maxProvider = providers.length > 0 ? providers[0][1] : 0
+  const pct = (value, max) => (max > 0 ? Math.max(3, Math.round((value / max) * 100)) + '%' : '0%')
+  const recent = stats ? stats.recent.slice(-8).reverse() : []
   return (
     <div className="dlr-section">
-      <div className="dlr-statsHead">
-        <span className="dlr-groupTitle">{L.groupStats}</span>
-        <button type="button" className="dlr-ovDel" onClick={() => void load()}>
-          {state.status === 'loading' ? L.statsLoading : L.statsRefresh}
-        </button>
-      </div>
-      {state.status === 'stale' && <span className="dlr-fail">{L.statsStale}</span>}
-      {state.status === 'error' && <span className="dlr-fail">{L.statsUnavailable(state.error)}</span>}
-      {stats && (
-        <div className="dlr-statsGrid">
-          <div className="dlr-statCell"><span className="dlr-statVal">{stats.retries}</span><span className="dlr-statLabel">{L.statsRetries}</span></div>
-          <div className="dlr-statCell"><span className="dlr-statVal">{stats.continues}</span><span className="dlr-statLabel">{L.statsContinues}</span></div>
-          <div className="dlr-statCell"><span className="dlr-statVal">{stats.capped}</span><span className="dlr-statLabel">{L.statsCapped}</span></div>
-          <div className="dlr-statCell"><span className="dlr-statVal">{stats.skipped}</span><span className="dlr-statLabel">{L.statsSkipped}</span></div>
+      <div className="dlr-panel">
+        <div className="dlr-statsHead">
+          <span className="dlr-groupTitle">{L.groupStats}</span>
+          <button type="button" className="dlr-miniBtn" onClick={() => void load()}>
+            {state.status === 'loading' ? L.statsLoading : L.statsRefresh}
+          </button>
         </div>
-      )}
-      {liveModels.length > 0 && (
-        <span className="dlr-note">{L.statsModels}：{liveModels.join('、')}</span>
-      )}
-      {idle && <span className="dlr-note">{L.statsEmpty}</span>}
-      {stats && !idle && (
-        <div className="dlr-statsCols">
-          <div className="dlr-statsCol">
-            <span className="dlr-groupTitle">{L.statsByCode}</span>
-            {codes.length === 0 && <span className="dlr-note">{L.statsEmpty}</span>}
-            {codes.map(([key, count]) => (
-              <span className="dlr-statRow" key={key}>
-                <code>{key}</code>
-                <span className="dlr-statKey">{count}</span>
+        {state.status === 'stale' && <span className="dlr-fail">{L.statsStale}</span>}
+        {state.status === 'error' && <span className="dlr-fail">{L.statsUnavailable(state.error)}</span>}
+        {stats && (
+          <div className="dlr-statsGrid">
+            <div className="dlr-statCell"><span className="dlr-statVal">{stats.retries}</span><span className="dlr-statLabel">{L.statsRetries}</span></div>
+            <div className="dlr-statCell isInfo"><span className="dlr-statVal">{stats.continues}</span><span className="dlr-statLabel">{L.statsContinues}</span></div>
+            <div className="dlr-statCell isWarn"><span className="dlr-statVal">{stats.capped}</span><span className="dlr-statLabel">{L.statsCapped}</span></div>
+            <div className="dlr-statCell isMuted"><span className="dlr-statVal">{stats.skipped}</span><span className="dlr-statLabel">{L.statsSkipped}</span></div>
+          </div>
+        )}
+        {liveModels.length > 0 && (
+          <div className="dlr-modelBox">
+            <span className="dlr-note">{L.statsModels}</span>
+            <div className="dlr-modelChips">
+              {liveModels.slice(0, 6).map((model) => (
+                <span className="dlr-modelChip" key={model} title={model}>{model}</span>
+              ))}
+              {liveModels.length > 6 && (
+                <span className="dlr-modelChip more" title={liveModels.slice(6).join('、')}>+{liveModels.length - 6}</span>
+              )}
+            </div>
+          </div>
+        )}
+        {idle && <span className="dlr-note">{L.statsEmpty}</span>}
+        {stats && !idle && (
+          <div className="dlr-statsCols">
+            <div className="dlr-statsCol">
+              <span className="dlr-colTitle">{L.statsByCode}</span>
+              {codes.length === 0 && <span className="dlr-note">{L.statsEmpty}</span>}
+              {codes.map(([key, count]) => (
+                <span className="dlr-barRow" key={key}>
+                  <span className="dlr-bar" style={{ width: pct(count, maxCode) }} aria-hidden="true" />
+                  <code className="dlr-barKey">{key}</code>
+                  <span className="dlr-barVal">{count}</span>
+                </span>
+              ))}
+            </div>
+            <div className="dlr-statsCol">
+              <span className="dlr-colTitle">{L.statsByProvider}</span>
+              {providers.length === 0 && <span className="dlr-note">{L.statsEmpty}</span>}
+              {providers.map(([key, count]) => {
+                const label = providerNames.get(key) || key
+                return (
+                  <span className="dlr-barRow" key={key}>
+                    <span className="dlr-bar" style={{ width: pct(count, maxProvider) }} aria-hidden="true" />
+                    <span className="dlr-barKey" title={label}>{label}</span>
+                    <span className="dlr-barVal">{count}</span>
+                  </span>
+                )
+              })}
+            </div>
+          </div>
+        )}
+        {stats && !idle && (
+          <div className="dlr-recent">
+            <span className="dlr-colTitle">{L.statsRecent}</span>
+            {recent.length === 0 && <span className="dlr-note">{L.statsEmpty}</span>}
+            {recent.map((entry, i) => (
+              <span className="dlr-recentRow" key={i}>
+                <span className="dlr-time">{fmtClock(entry.t)}</span>
+                <span className={'dlr-kind ' + entry.kind}>{kinds[entry.kind] || entry.kind}</span>
+                {entry.code ? <code>{entry.code}</code> : <span />}
+                <span title={entryTarget(entry)}>{entryTarget(entry)}</span>
+                <span className="dlr-time">{typeof entry.delayMs === 'number' ? fmtMs(entry.delayMs) : ''}</span>
               </span>
             ))}
           </div>
-          <div className="dlr-statsCol">
-            <span className="dlr-groupTitle">{L.statsByProvider}</span>
-            {providers.length === 0 && <span className="dlr-note">{L.statsEmpty}</span>}
-            {providers.map(([key, count]) => (
-              <span className="dlr-statRow" key={key}>
-                <span>{providerNames.get(key) || key}</span>
-                <span className="dlr-statKey">{count}</span>
-              </span>
-            ))}
-          </div>
+        )}
+        <div className="dlr-statsFoot">
+          <span className="dlr-note">
+            {state.data
+              ? L.statsDiag(state.data.diagTag) + (stats ? ' · ' + L.statsUptime((state.data.now - stats.startedAt) / 60000) : '')
+              : logPath || L.logFile}
+          </span>
+          <button type="button" className="dlr-miniBtn" onClick={toggleTail}>
+            {tail !== null ? L.statsLogHide : L.statsLogTail}
+          </button>
         </div>
-      )}
-      {stats && !idle && (
-        <div className="dlr-statsList">
-          <span className="dlr-groupTitle">{L.statsRecent}</span>
-          {stats.recent.length === 0 && <span className="dlr-note">{L.statsEmpty}</span>}
-          {stats.recent.slice(-8).reverse().map((entry, i) => (
-            <span className="dlr-recentRow" key={i}>
-              <span className="dlr-statKey">{fmtClock(entry.t)}</span>
-              <span>{kinds[entry.kind] || entry.kind}</span>
-              {entry.code ? <code>{entry.code}</code> : null}
-              {entryTarget(entry) !== '' ? <span>{entryTarget(entry)}</span> : null}
-              {typeof entry.delayMs === 'number' ? <span className="dlr-statKey">{fmtMs(entry.delayMs)}</span> : null}
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="dlr-statsHead">
-        <span className="dlr-note">
-          {state.data
-            ? L.statsDiag(state.data.diagTag) + (stats ? ' · ' + L.statsUptime(Math.max(0, Math.round((state.data.now - stats.startedAt) / 60000))) : '')
-            : logPath || L.logFile}
-        </span>
-        <button type="button" className="dlr-ovDel" onClick={toggleTail}>
-          {tail !== null ? L.statsLogHide : L.statsLogTail}
-        </button>
+        {tail !== null && <pre className="dlr-logTail">{tail === '' ? L.statsLogEmpty : tail}</pre>}
       </div>
-      {tail !== null && <pre className="dlr-logTail">{tail === '' ? L.statsLogEmpty : tail}</pre>}
     </div>
   )
 })
