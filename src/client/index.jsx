@@ -1435,6 +1435,8 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
               <span className="dlr-title">{L.title}</span>
               <Badge on={draft.enabled} label={draft.enabled ? L.badgeOn : L.badgeOff} />
             </div>
+            {/* 描述留在左列：它正好填掉「保存」左边那块空白，与第二排按钮同一行 */}
+            <span className="dlr-desc">{L.desc}</span>
           </div>
           {/* 右列两排：第一排总开关，第二排保存控件 */}
           <div className="dlr-headCtl">
@@ -1456,7 +1458,6 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
             </div>
           </div>
         </div>
-        <span className="dlr-desc">{L.desc}</span>
         <span className="dlr-status">{status}</span>
         {ready && !hostFresh && <span className="dlr-fail">{L.hostStale}</span>}
       </div>
