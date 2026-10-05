@@ -468,10 +468,12 @@ const CSS = [
   // 有 24px 内边距。用 -24px 能把那条缝顶掉，但代价是吸住时整条顶栏被顶上去 24px、自身内边距被吃掉
   // ——看起来就像「吸顶时顶栏布局变了」（用户明确反对）。用 0 则吸住位置＝静止位置，顶栏一个像素都不动；
   // 那条 24px 的缝改由下面 scroll-state 查询在**吸住时**补一块同色背景带盖住，静止时不画任何东西。
-  '.dlr-head{position:sticky;top:0;z-index:3;display:flex;flex-direction:column;gap:6px;padding:14px 0 12px;background:var(--dsw-alias-bg-base,#fff)}',
-  // 真正吸住时（JS 置 data-stuck=1）补一块同色背景带，盖住宿主 24px 内边距造成的那条缝；
-  // 未吸住时不画任何东西，静止态与原来完全一致。
-  '.dlr-head[data-stuck="1"]{box-shadow:0 -24px 0 0 var(--dsw-alias-bg-base,#fff)}',
+  // 顶栏与内容之间的分隔线：用 box-shadow 画，不占高度——加 border 会让顶栏高 1px、
+  // 吸住瞬间抖一下（用户对位移很敏感）。这条线常驻，吸顶时也靠它跟滚上来的内容分开。
+  '.dlr-head{position:sticky;top:0;z-index:3;display:flex;flex-direction:column;gap:6px;padding:14px 0 12px;background:var(--dsw-alias-bg-base,#fff);box-shadow:0 1px 0 0 var(--dsw-alias-border-l2)}',
+  // 真正吸住时（JS 置 data-stuck=1）再补一块同色背景带，盖住宿主 24px 内边距造成的那条缝；
+  // 未吸住时不画那条带，静止态与原来一致（分隔线仍在）。
+  '.dlr-head[data-stuck="1"]{box-shadow:0 -24px 0 0 var(--dsw-alias-bg-base,#fff),0 1px 0 0 var(--dsw-alias-border-l2)}',
   // 顶栏两层：上层「标题 + 右列控件」，下层「一行短描述 + 状态行」。
   // 右列 .dlr-headCtl 就是**两排**：总开关在上、保存控件在下（用户明确要的排法）。
   // 描述已压到一行，不会再插进两排按钮中间。
