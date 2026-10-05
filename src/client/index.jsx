@@ -459,7 +459,8 @@ const useL = () => {
 }
 
 const CSS = [
-  '.dlr-card{border-bottom:1px solid var(--dsw-alias-border-l2);padding:0 0 20px;display:flex;flex-direction:column;gap:16px}',
+  // 卡片最底下那条分隔线已去掉（2026-10-05 用户诉求）；宿主自己的分区已经提供了边界
+  '.dlr-card{padding:0 0 20px;display:flex;flex-direction:column;gap:16px}',
   // 顶栏吸顶（2026-10-05）：保存/撤销从卡片底部搬到标题行右侧，整条顶栏 sticky 在滚动容器顶部。
   // 卡片高约 2400px，滚到中段时底部按钮早已不可见——这是用户提的诉求。
   // 背景必须用设置页内容区同款 token（宿主 .VOzbGW_content 就是 --dsw-alias-bg-base），
