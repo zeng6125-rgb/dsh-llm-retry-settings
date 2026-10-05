@@ -460,7 +460,8 @@ const useL = () => {
 
 const CSS = [
   // 卡片最底下那条分隔线已去掉（2026-10-05 用户诉求）；宿主自己的分区已经提供了边界。
-  '.dlr-card{padding:0 0 20px;display:flex;flex-direction:column;gap:16px}',
+  // 居中：宿主设置页内容区本身就是 width:100%;max-width:960px 的居中列，卡片跟它对齐。
+  '.dlr-card{max-width:960px;margin:0 auto;padding:0 0 20px;display:flex;flex-direction:column;gap:16px}',
   // 顶栏吸顶（2026-10-05）：保存/撤销在标题行右侧，整条顶栏 sticky 在滚动容器顶部。
   // 卡片高约 2400px，滚到中段时底部按钮早已不可见——这是用户提的诉求。
   //
@@ -470,10 +471,12 @@ const CSS = [
   // 那条 24px 的缝改由下面 scroll-state 查询在**吸住时**补一块同色背景带盖住，静止时不画任何东西。
   // 顶栏与内容之间的分隔线：用 box-shadow 画，不占高度——加 border 会让顶栏高 1px、
   // 吸住瞬间抖一下（用户对位移很敏感）。这条线常驻，吸顶时也靠它跟滚上来的内容分开。
-  '.dlr-head{position:sticky;top:0;z-index:3;display:flex;flex-direction:column;gap:6px;padding:14px 0 12px;background:var(--dsw-alias-bg-base,#fff);box-shadow:0 1px 0 0 var(--dsw-alias-border-l2)}',
+  // 两侧的 50vw 同色阴影：卡片居中后顶栏只有 960px 宽，吸住时别的分区从两侧空白区滚过会露出来，
+  // 用它把两侧补齐（纯绘制、不产生横向滚动条；颜色与页面底一致，静止时看不出来）。
+  '.dlr-head{position:sticky;top:0;z-index:3;display:flex;flex-direction:column;gap:6px;padding:14px 0 12px;background:var(--dsw-alias-bg-base,#fff);box-shadow:-50vw 0 0 0 var(--dsw-alias-bg-base,#fff),50vw 0 0 0 var(--dsw-alias-bg-base,#fff),0 1px 0 0 var(--dsw-alias-border-l2)}',
   // 真正吸住时（JS 置 data-stuck=1）再补一块同色背景带，盖住宿主 24px 内边距造成的那条缝；
-  // 未吸住时不画那条带，静止态与原来一致（分隔线仍在）。
-  '.dlr-head[data-stuck="1"]{box-shadow:0 -24px 0 0 var(--dsw-alias-bg-base,#fff),0 1px 0 0 var(--dsw-alias-border-l2)}',
+  // 未吸住时不画那条带，静止态与原来一致（分隔线与两侧补齐仍在）。
+  '.dlr-head[data-stuck="1"]{box-shadow:0 -24px 0 0 var(--dsw-alias-bg-base,#fff),-50vw 0 0 0 var(--dsw-alias-bg-base,#fff),50vw 0 0 0 var(--dsw-alias-bg-base,#fff),0 1px 0 0 var(--dsw-alias-border-l2)}',
   // 顶栏两层：上层「标题 + 右列控件」，下层「一行短描述 + 状态行」。
   // 右列 .dlr-headCtl 就是**两排**：总开关在上、保存控件在下（用户明确要的排法）。
   // 描述已压到一行，不会再插进两排按钮中间。

@@ -75,8 +75,22 @@ const unvol = <T>(v: T): T =>
     ? ((v as any).get() as T)
     : v
 
-/** 诊断构建标记：写进 host.log，用来确认运行中的到底是哪一版 lib/index.js。 */
-const DIAG_TAG = 'v0.1.13'
+/**
+ * 诊断构建标记：写进 host.log、并经观测路由回给客户端卡片，用来确认运行中的到底是哪一版 lib/index.js。
+ *
+ * 2026-10-05：改成**运行时读 package.json**。此前是手写常量，v0.1.14 / v0.1.15 两次发版都忘了同步，
+ * 卡片上一直显示 v0.1.13（用户实测发现）。读不到时退回构建期兜底常量。
+ */
+const DIAG_TAG: string = (() => {
+  try {
+    const req = createRequire(import.meta.url)
+    const pkg: any = req('../package.json')
+    if (pkg && typeof pkg.version === 'string' && pkg.version !== '') return 'v' + pkg.version
+  } catch {
+    /* 包结构异常时用兜底值 */
+  }
+  return 'v0.1.15'
+})()
 
 /**
  * 文件诊断日志：`~/.dsh/logs/dsh-llm-retry-settings/host.log`。
