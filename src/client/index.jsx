@@ -459,8 +459,13 @@ const useL = () => {
 }
 
 const CSS = [
-  '.dlr-card{border-bottom:1px solid var(--dsw-alias-border-l2);padding:18px 0 20px;display:flex;flex-direction:column;gap:16px;contain:layout paint}',
-  '.dlr-head{display:flex;align-items:flex-start;gap:12px}',
+  '.dlr-card{border-bottom:1px solid var(--dsw-alias-border-l2);padding:0 0 20px;display:flex;flex-direction:column;gap:16px}',
+  // 顶栏吸顶（2026-10-05）：保存/撤销从卡片底部搬到标题行右侧，整条顶栏 sticky 在滚动容器顶部。
+  // 卡片高约 2400px，滚到中段时底部按钮早已不可见——这是用户提的诉求。
+  // 背景必须用设置页内容区同款 token（宿主 .VOzbGW_content 就是 --dsw-alias-bg-base），
+  // 否则吸顶后下面的块会从半透明栏下透出来。
+  '.dlr-head{position:sticky;top:0;z-index:3;display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:14px 0 12px;background:var(--dsw-alias-bg-base,#fff);border-bottom:1px solid var(--dsw-alias-border-l2)}',
+  '.dlr-headActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;flex:none;margin-left:auto}',
   '.dlr-headText{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}',
   '.dlr-titleRow{display:flex;align-items:center;gap:8px}',
   // 标题显式深色（先给非 light-dark 浏览器一个纯深色回退）；字号提到 16 加粗
@@ -483,7 +488,11 @@ const CSS = [
   // 「按块分类」（2026-10-05）：一个主题一个 .dlr-block（统一边框/圆角/内边距），
   // 块头 = 标题 + 右侧操作，块体 = 内容。此前字段、错误码、覆盖规则、退避曲线全挤在
   // 同一个 .dlr-section 里，彼此没有视觉边界；分块后所有块左边界与间距一致，才对得齐。
-  '.dlr-block{display:flex;flex-direction:column;gap:12px;padding:14px 16px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px}',
+  // contain 从卡片挪到各块：卡片自己要当吸顶顶栏的容器（顶栏是卡片直接子元素），
+  // 祖先上的 contain:paint 有把 sticky 的参照物变成自身盒子的风险；放到块上既保留
+  // 「隔离布局/绘制」的收益（当初实测：卡片无 contain 时滚动超标帧 15 → 47~58），
+  // 又不会碰到顶栏。块内部是 flex+gap，不靠外边距折叠，隔离后无副作用。
+  '.dlr-block{display:flex;flex-direction:column;gap:12px;padding:14px 16px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;contain:layout paint}',
   '.dlr-blockHead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}',
   // 块头里的操作控件（刷新/开关/打开日志）统一靠右，标题永远贴左边界
   '.dlr-blockHead .dlr-miniBtn,.dlr-blockHead .dlr-switch{margin-left:auto}',
@@ -536,7 +545,6 @@ const CSS = [
   '.dlr-chipClear:hover{text-decoration:underline}',
 
   '.dlr-logPath{color:var(--dsw-alias-label-caption);font-size:12px;line-height:17px;font-family:ui-monospace,Consolas,monospace;word-break:break-all}',
-  '.dlr-actions{display:flex;align-items:center;gap:8px;justify-content:flex-end}',
   '.dlr-saveBtn{height:30px;padding:0 18px;border:none;border-radius:6px;background:var(--dsw-alias-state-business-primary);color:#fff;font-size:13px;cursor:pointer}',
   '.dlr-saveBtn:disabled{opacity:.5;cursor:default}',
   '.dlr-revertBtn{height:30px;padding:0 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:13px;cursor:pointer}',
@@ -1418,13 +1426,23 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
           <span className="dlr-status">{status}</span>
           {ready && !hostFresh && <span className="dlr-fail">{L.hostStale}</span>}
         </div>
-        <Switch
-          checked={draft.enabled}
-          disabled={!writable}
-          label={L.title}
-          title={draft.enabled ? L.badgeOn : L.badgeOff}
-          onClick={() => update('enabled', !draft.enabled)}
-        />
+        {/* 顶栏右侧：保存状态 + 撤销/保存 + 总开关。吸顶后随时可存，不必滚到卡片底部。 */}
+        <div className="dlr-headActions">
+          {dirty && <span className="dlr-dirtyHint">{L.dirtyHint}</span>}
+          {saveState === 'fail' && <span className="dlr-fail">{L.saveFailed}</span>}
+          {saveState === 'ok' && <span className="dlr-ok">{L.saved}</span>}
+          {dirty && saveState !== 'saving' && <button type="button" className="dlr-revertBtn" onClick={revert}>{L.revert}</button>}
+          <button type="button" className="dlr-saveBtn" disabled={!writable || !dirty || saveState === 'saving'} onClick={save}>
+            {saveState === 'saving' ? L.saving : L.save}
+          </button>
+          <Switch
+            checked={draft.enabled}
+            disabled={!writable}
+            label={L.title}
+            title={draft.enabled ? L.badgeOn : L.badgeOff}
+            onClick={() => update('enabled', !draft.enabled)}
+          />
+        </div>
       </div>
 
       <div className="dlr-body">
@@ -1583,15 +1601,6 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
         <code className="dlr-logPath">{logAbsolute() !== '' ? logAbsolute() : L.logFile}</code>
         {logMsg === 'copied' && <span className="dlr-note">{L.logCopied}</span>}
         {logMsg === 'manual' && <span className="dlr-fail">{L.logManual}</span>}
-      </div>
-      <div className="dlr-actions">
-        {dirty && <span className="dlr-dirtyHint">{L.dirtyHint}</span>}
-        {saveState === 'fail' && <span className="dlr-fail">{L.saveFailed}</span>}
-        {saveState === 'ok' && <span className="dlr-ok">{L.saved}</span>}
-        {dirty && saveState !== 'saving' && <button type="button" className="dlr-revertBtn" onClick={revert}>{L.revert}</button>}
-        <button type="button" className="dlr-saveBtn" disabled={!writable || !dirty || saveState === 'saving'} onClick={save}>
-          {saveState === 'saving' ? L.saving : L.save}
-        </button>
       </div>
     </div>
   )
