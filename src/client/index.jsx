@@ -181,7 +181,7 @@ const ZH = {
   saving: '保存中…',
   saved: '已保存 ✓',
   saveFailed: '保存失败',
-  saveFailedHint: '写入被宿主拒绝：多为并发版本冲突（已自动重读并重写一次）。仍失败请刷新页面再试。',
+  saveFailedHint: '写入被宿主拒绝。插件已自动重读配置并重写一次；仍失败请刷新页面再试。',
   dirtyHint: '有未保存的修改',
   hostStale: '宿主半边还是旧版（内核未重启）：覆盖规则 / 续写增强 / 观测面板可以看，但保存不生效、观测路由会 404。',
   // —— 退避可视化 + 预算 ——
@@ -341,7 +341,7 @@ const EN = {
   saving: 'Saving…',
   saved: 'Saved ✓',
   saveFailed: 'Save failed',
-  saveFailedHint: 'The host rejected the write — usually a revision conflict (already re-read and retried once). Refresh and try again if it persists.',
+  saveFailedHint: 'The host rejected the write. The plugin already re-read the config and retried once; refresh and try again if it persists.',
   dirtyHint: 'Unsaved changes',
   hostStale: 'The host half is still the old build (kernel not restarted): the override rules, continuation extras and observation panel render, but saving has no effect and the stats route returns 404.',
   groupBackoff: 'Backoff & budget',
