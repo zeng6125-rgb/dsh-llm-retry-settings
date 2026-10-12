@@ -180,7 +180,8 @@ const ZH = {
   revert: '放弃',
   saving: '保存中…',
   saved: '已保存 ✓',
-  saveFailed: '保存失败 ✗（重试或刷新页面；宿主日志见 settings-rejected）',
+  saveFailed: '保存失败',
+  saveFailedHint: '写入被宿主拒绝：多为并发版本冲突（已自动重读并重写一次）。仍失败请刷新页面再试。',
   dirtyHint: '有未保存的修改',
   hostStale: '宿主半边还是旧版（内核未重启）：覆盖规则 / 续写增强 / 观测面板可以看，但保存不生效、观测路由会 404。',
   // —— 退避可视化 + 预算 ——
@@ -339,7 +340,8 @@ const EN = {
   revert: 'Discard',
   saving: 'Saving…',
   saved: 'Saved ✓',
-  saveFailed: 'Save failed ✗ (retry or refresh; host log: settings-rejected)',
+  saveFailed: 'Save failed',
+  saveFailedHint: 'The host rejected the write — usually a revision conflict (already re-read and retried once). Refresh and try again if it persists.',
   dirtyHint: 'Unsaved changes',
   hostStale: 'The host half is still the old build (kernel not restarted): the override rules, continuation extras and observation panel render, but saving has no effect and the stats route returns 404.',
   groupBackoff: 'Backoff & budget',
@@ -491,7 +493,10 @@ const CSS = [
   '.dlr-badge.off{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}',
   '.dlr-badge.off i{background:var(--dsw-alias-label-caption)}',
   '.dlr-desc{color:#24292f;color:light-dark(#24292f,#ccd3da);font-size:13px;line-height:19px}',
-  '.dlr-status{color:var(--dsw-alias-label-caption);font-size:12px;line-height:17px}',
+  // 状态行：左摘要可截断、右保存状态不换行 ⇒ 顶栏高度恒定，失败/成功都不会撑开布局
+  '.dlr-statusRow{display:flex;align-items:center;gap:10px;min-width:0}',
+  '.dlr-status{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-caption);font-size:12px;line-height:17px}',
+  '.dlr-saveMsg{flex:none;display:flex;align-items:center;gap:8px;white-space:nowrap;font-size:12px;line-height:17px}',
   '.dlr-switch{width:44px;height:26px;flex:none;background:var(--dsw-alias-interactive-bg-hover);border:none;border-radius:999px;position:relative;cursor:pointer;transition:background .15s;padding:0;margin-top:2px}',
   '.dlr-switch[aria-checked=true]{background:var(--dsw-alias-state-business-primary)}',
   '.dlr-switch:disabled{opacity:.5;cursor:default}',
@@ -1476,10 +1481,21 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
             {/* 描述 + 状态都留在左列：左列三行（标题/描述/状态）与右列两排（开关/保存）等高，
                 不会在中间空出一行。 */}
             <span className="dlr-desc">{L.desc}</span>
-            <span className="dlr-status">{status}</span>
+            {/* 状态行固定两个槽位：左「配置摘要」可截断、右「保存状态」不换行。
+                保存失败时那串文字此前直接挤进右侧按钮行，会把顶栏顶高、按钮换行（用户实测）。
+                现在失败/已保存/未保存都只占这一行、且不影响任何尺寸。 */}
+            <div className="dlr-statusRow">
+              <span className="dlr-status" title={status}>{status}</span>
+              <span className="dlr-saveMsg">
+                {dirty && saveState !== 'fail' && <span className="dlr-dirtyHint">{L.dirtyHint}</span>}
+                {saveState === 'fail' && <span className="dlr-fail" title={L.saveFailedHint}>{L.saveFailed}</span>}
+                {saveState === 'ok' && <span className="dlr-ok">{L.saved}</span>}
+              </span>
+            </div>
             {ready && !hostFresh && <span className="dlr-fail">{L.hostStale}</span>}
           </div>
-          {/* 右列两排：第一排总开关，第二排保存控件 */}
+          {/* 右列两排：第一排总开关，第二排保存控件（撤销按钮常驻占位，只是不可见——
+              这样「有改动/没改动」不会让按钮左右跳） */}
           <div className="dlr-headCtl">
             <Switch
               checked={draft.enabled}
@@ -1489,10 +1505,17 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
               onClick={() => update('enabled', !draft.enabled)}
             />
             <div className="dlr-headActions">
-              {dirty && <span className="dlr-dirtyHint">{L.dirtyHint}</span>}
-              {saveState === 'fail' && <span className="dlr-fail">{L.saveFailed}</span>}
-              {saveState === 'ok' && <span className="dlr-ok">{L.saved}</span>}
-              {dirty && saveState !== 'saving' && <button type="button" className="dlr-revertBtn" onClick={revert}>{L.revert}</button>}
+              <button
+                type="button"
+                className="dlr-revertBtn"
+                onClick={revert}
+                disabled={saveState === 'saving'}
+                tabIndex={dirty ? undefined : -1}
+                aria-hidden={dirty ? undefined : true}
+                style={dirty ? undefined : { visibility: 'hidden' }}
+              >
+                {L.revert}
+              </button>
               <button type="button" className="dlr-saveBtn" disabled={!writable || !dirty || saveState === 'saving'} onClick={save}>
                 {saveState === 'saving' ? L.saving : L.save}
               </button>
@@ -1699,9 +1722,40 @@ function makeRemoteSettingsScope(ctx, namespace) {
   }
   // 0.1.7 remote RPC 统一返回 {ok:true,value}|{ok:false,error} 信封（dsh-client-connection parseConnectionResponse）
   const unwrap = (resp) => (resp && typeof resp === 'object' && 'ok' in resp ? (resp.ok ? resp.value : undefined) : resp)
+  /** 被宿主拒绝的信封（写失败一律走这里，不再 throw）。 */
+  const isRejected = (resp) => !!(resp && typeof resp === 'object' && 'ok' in resp && resp.ok === false)
   const absorbResp = (resp) => {
     const view = unwrap(resp)
     if (view) absorb(view)
+  }
+  /**
+   * 写一次；被拒就重读最新 revision 再写一次（2026-10-12）。
+   *
+   * 证据（读的是宿主实际安装的那份）：`@deepseek-ai/dsh-settings` v0.2.1-alpha.2（package.json 实读）
+   * 的 lib/index.js:511
+   *   `if (expected !== void 0 && descriptor.revision !== expected) throw new SettingsConflictError(ns, expected, descriptor.revision)`
+   * 而同一版本 `async update(ns, patch, expectedRevision)`（L470）**没有返回值** ⇒ 写入成功后我们拿不到新
+   * revision，只能靠 describe 更新 ⇒ 第二次写入起就带着过期 revision，被拒。
+   * 旧代码的 absorbResp 只做 `if (view) absorb(view)`，`{ok:false,error}` 信封被静默丢弃 ⇒
+   * 界面只显示「保存失败」，真正原因看不到（用户实测）。
+   * 这里重读一次再写一次（fn 体里读的是闭包中的最新 revision）；错误是「拒绝信封」还是
+   * 「直接 reject」两种通道都覆盖（RPC 契约只保证前者，后者一并兜住，最多多写一次）。
+   */
+  const writeWithRetry = async (fn) => {
+    let resp
+    try {
+      resp = await fn()
+      if (!isRejected(resp)) {
+        absorbResp(resp)
+        return resp
+      }
+    } catch (error) {
+      /* 走 reject 通道：下面统一重读再写 */
+    }
+    await refresh()
+    resp = await fn()
+    absorbResp(resp)
+    return resp
   }
   const refresh = () =>
     Promise.resolve()
@@ -1780,15 +1834,9 @@ function makeRemoteSettingsScope(ctx, namespace) {
       }
     },
     set: (key, value) =>
-      Promise.resolve()
-        .then(() => remote.update(target, { [key]: value }, revision))
-        .then(absorbResp)
-        .then(() => undefined),
+      writeWithRetry(() => remote.update(target, { [key]: value }, revision)).then(() => undefined),
     mutate: (ops) =>
-      Promise.resolve()
-        .then(() => remote.mutate(target, ops, revision))
-        .then(absorbResp)
-        .then(() => undefined),
+      writeWithRetry(() => remote.mutate(target, ops, revision)).then(() => undefined),
     refresh,
   }
 }
