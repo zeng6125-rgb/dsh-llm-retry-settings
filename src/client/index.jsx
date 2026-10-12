@@ -603,12 +603,19 @@ const CSS = [
   '.dlr-modelChip.more{color:var(--dsw-alias-label-secondary);font-family:inherit}',
   '.dlr-statsCols{display:flex;gap:18px;flex-wrap:wrap}',
   '.dlr-statsCols > .dlr-statsCol{display:flex;flex-direction:column;gap:3px;min-width:160px;flex:1 1 200px}',
-  '.dlr-colTitle{color:var(--dsw-alias-label-caption);font-size:11px;line-height:15px;letter-spacing:.3px;text-transform:uppercase}',
+  // 列标题：不加 text-transform:uppercase —— 该属性只对拉丁字母生效，于是中文列标题
+  // 「按错误码」与拉丁列标题「按 provider」渲染成两种样子（用户实测反馈「字体样式不同步」）；
+  // letter-spacing 同理（中文会被逐字撑开）。两种语言统一按原样显示。
+  '.dlr-colTitle{color:var(--dsw-alias-label-caption);font-size:11px;line-height:15px}',
   // 占比条：行内绝对定位的浅色块，文字层压在它上面（各子元素 position:relative）
   '.dlr-barRow{position:relative;display:flex;align-items:center;gap:8px;padding:2px 6px;border-radius:4px;font-size:12px;line-height:18px;font-variant-numeric:tabular-nums}',
   '.dlr-barRow > *{position:relative}',
   '.dlr-bar{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--dsw-alias-state-business-primary);opacity:.12;pointer-events:none}',
   '.dlr-barKey{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  // 机器串（错误码 / provider/model）统一用同一套等宽栈：此前错误码走 <code> 的浏览器默认等宽、
+  // provider/model 走正文字体，同一行里两种字形（用户实测反馈「字体样式不同步」）。
+  // 与 .dlr-modelChip 用的是同一套 ui-monospace,Consolas,monospace。
+  '.dlr-barKey,.dlr-mono{font-family:ui-monospace,Consolas,monospace}',
   '.dlr-barVal{flex:none;color:var(--dsw-alias-label-secondary,#8a8a8a)}',
   // 最近记录：定宽网格对齐（时刻 | 类型 | 错误码 | provider/model | 退避），行间细分隔线。
   // 列宽必须**定宽**：每行是各自独立的 grid，用 auto/minmax 会因内容不同逐行错位
@@ -1227,8 +1234,8 @@ const StatsPanel = memo(function StatsPanel({ logPath, live, lang }) {
             <span className="dlr-recentRow" key={i}>
               <span className="dlr-time">{fmtClock(entry.t)}</span>
               <span className={'dlr-kind ' + entry.kind}>{kinds[entry.kind] || entry.kind}</span>
-              {entry.code ? <code>{entry.code}</code> : <span />}
-              <span title={entryTarget(entry)}>{entryTarget(entry)}</span>
+              {entry.code ? <code className="dlr-mono">{entry.code}</code> : <span />}
+              <span className="dlr-mono" title={entryTarget(entry)}>{entryTarget(entry)}</span>
               <span className="dlr-time">{typeof entry.delayMs === 'number' ? fmtMs(entry.delayMs) : ''}</span>
             </span>
           ))}
