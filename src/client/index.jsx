@@ -63,6 +63,8 @@ const DEFAULTS = {
   maxContinuations: 2,
   continuationPrompt: '',
   continueOnError: false,
+  honorProviderRetryAfter: true,
+  maxProviderRetryAfterMs: 60000,
   overrides: [],
 }
 
@@ -161,6 +163,10 @@ const ZH = {
   fieldMaxHint: '退避时间封顶的毫秒数',
   fieldJitter: '抖动比例',
   fieldJitterHint: '0~1，给退避加随机抖动避免同时重试',
+  honorRetryAfter: '尊重上游的重试建议',
+  honorRetryAfterHint: '上游回「N 秒后再试」（Retry-After / 排队）时，自动把最大退避抬到装得下它——内核只在建议不超过最大退避时按建议等待，超过就直接放弃重试。',
+  maxRetryAfter: '等待上限',
+  maxRetryAfterHint: '上游建议超过此值时按此值等待（而不是放弃重试）',
   groupCodes: '补充可重试的错误码',
   fieldCodesHint: '按“重试有没有恢复价值”分六组列出，组内已选中的码自动靠前并计数。勾选的码与 provider 内置列表取并集（不覆盖已有码）。琥珀色 = 重试通常无意义，慎选；STREAM_ERROR 流式失败归入 PI_AI_ERROR，SSE 卡流归入 TIMEOUT。provider 配置里手工加入、不在清单内的码会以虚线“自定义”组出现。',
   codesNone: '未勾选任何补充码——仅按 provider 内置码重试',
@@ -327,6 +333,10 @@ const EN = {
   fieldMaxHint: 'Upper bound for the backoff wait',
   fieldJitter: 'Jitter ratio',
   fieldJitterHint: '0~1, randomizes each backoff to avoid synchronized retries',
+  honorRetryAfter: 'Honor the upstream retry hint',
+  honorRetryAfterHint: 'When the upstream answers "retry in N seconds" (Retry-After / queueing), raise the max backoff enough to fit it — the kernel only waits the hint when it fits within the max backoff, otherwise it gives up retrying.',
+  maxRetryAfter: 'Wait cap',
+  maxRetryAfterHint: 'Wait this long when the upstream hint exceeds it (instead of giving up the retry)',
   groupCodes: 'Extra retryable error codes',
   fieldCodesHint: 'Grouped into six buckets by "is retrying worth it"; picked codes float to the front of their group and are counted. Your picks are unioned with the provider\'s built-in list (never replacing it). Amber = retrying usually does not help. STREAM_ERROR folds into PI_AI_ERROR, SSE stalls into TIMEOUT. Codes added by hand in a provider config show up in a dashed "custom" group.',
   codesNone: 'No extra codes — retry only the provider built-ins',
@@ -898,6 +908,9 @@ function projectValue(value) {
     maxContinuations: numOr(value.maxContinuations, DEFAULTS.maxContinuations),
     continuationPrompt: strOr(value.continuationPrompt, DEFAULTS.continuationPrompt),
     continueOnError: value.continueOnError === true,
+    // 缺字段按开启处理：与宿主默认 true 对齐（旧版本宿主没有这两个字段时不应显示成关闭）
+    honorProviderRetryAfter: value.honorProviderRetryAfter !== false,
+    maxProviderRetryAfterMs: numOr(value.maxProviderRetryAfterMs, DEFAULTS.maxProviderRetryAfterMs),
     overrides: normOverrides(value.overrides),
   }
 }
@@ -1584,6 +1597,30 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
               min={0} max={1} step={0.05} float
               disabled={!writable} dirty={draft.jitterRatio !== current.jitterRatio}
               onChange={(n) => update('jitterRatio', n)} onEnter={save} />
+          </div>
+          {/* 上游 Retry-After 建议。内核规则（dsh-llm-retry/lib/index.js:168-172，逐行读过）：
+              建议 ≤ maxDelayMs → delayMs = 建议（按建议等）；建议 > maxDelayMs → mode=normal 直接
+              return next()（放弃重试），mode=always 则退回本地退避。本插件因此做两件事：
+              ① 把 maxDelayMs 抬到装得下建议；② 建议超过用户上限时，把 failure.providerRetryAfterMs
+              改写为上限——内核随后读到的是改写后的值，于是落回「按建议等」分支，等到的是上限。 */}
+          <div className="dlr-switchRow">
+            <Switch
+              checked={draft.honorProviderRetryAfter}
+              disabled={!writable}
+              label={L.honorRetryAfter}
+              title={draft.honorProviderRetryAfter ? L.switchOn : L.switchOff}
+              onClick={() => update('honorProviderRetryAfter', !draft.honorProviderRetryAfter)}
+            />
+            <div className="dlr-switchText">
+              <span className="dlr-groupTitle">{L.honorRetryAfter}</span>
+              <span className="dlr-note">{L.honorRetryAfterHint}</span>
+            </div>
+          </div>
+          <div className={'dlr-grid' + (draft.honorProviderRetryAfter ? '' : ' dlr-disabled')}>
+            <NumberField label={L.maxRetryAfter} hint={L.maxRetryAfterHint} value={draft.maxProviderRetryAfterMs}
+              min={1000} step={1000} suffix={L.suffixMs}
+              disabled={!writable || !draft.honorProviderRetryAfter} dirty={draft.maxProviderRetryAfterMs !== current.maxProviderRetryAfterMs}
+              onChange={(n) => update('maxProviderRetryAfterMs', n)} onEnter={save} />
           </div>
           <BackoffViz
             maxRetries={draft.maxRetries}

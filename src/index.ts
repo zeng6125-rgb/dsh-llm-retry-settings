@@ -358,6 +358,10 @@ export const DEFAULTS = {
   continuationPrompt: '',
   /** 瞬时错误（重试彻底失败）也自动续写一轮；默认关闭。 */
   continueOnError: false,
+  /** 尊重上游 Retry-After 建议（providerRetryAfterMs）；默认开启。 */
+  honorProviderRetryAfter: true,
+  /** 尊重上游建议时的等待上限，默认 60 秒。 */
+  maxProviderRetryAfterMs: 60000,
   /** provider/model 级策略覆盖；空数组 = 全部沿用全局值。 */
   overrides: [] as PolicyOverride[],
   /** 只读：宿主日志绝对路径。0.1.7 configure 分支不再有 base 注入 → 默认值直接给真实路径（卡片 hostStale 判据 = 它非空）。 */
@@ -380,6 +384,16 @@ export interface Config {
   continuationPrompt: string
   /** 会话因瞬时错误结束时也自动续写一轮（确定性错误不续写）。 */
   continueOnError: boolean
+  /**
+   * 上游给了 Retry-After 建议（failure.providerRetryAfterMs）时，自动把退避上限抬到装得下它。
+   *
+   * 内核规则（dsh-llm-retry/lib/index.js:168-171）：建议 ≤ maxDelayMs 时按建议等；
+   * 建议 > maxDelayMs 时 normal 模式**直接放弃重试**。所以默认开启——否则上游说
+   * 「30 秒后再来」时，默认 10s 的上限会让内核干脆不重试。
+   */
+  honorProviderRetryAfter: boolean
+  /** 尊重上游建议时的等待上限（毫秒）：建议超过它则按它截断，而不是放弃重试。 */
+  maxProviderRetryAfterMs: number
   /** provider/model 级策略覆盖，按顺序取第一条命中；数值 -1 = 继承全局值。 */
   overrides: PolicyOverride[]
   /** 只读：宿主日志的绝对路径（base 层注入，UI 用它打开日志）。 */
@@ -407,6 +421,8 @@ export const Config = z.object({
   maxContinuations: vol(z.number().step(1).min(0).default(DEFAULTS.maxContinuations)),
   continuationPrompt: vol(z.string().default(DEFAULTS.continuationPrompt)),
   continueOnError: vol(z.boolean().default(DEFAULTS.continueOnError)),
+  honorProviderRetryAfter: vol(z.boolean().default(DEFAULTS.honorProviderRetryAfter)),
+  maxProviderRetryAfterMs: vol(z.number().min(1000).default(DEFAULTS.maxProviderRetryAfterMs)),
   overrides: vol(
     z
       .array(
@@ -471,6 +487,8 @@ function coerceConfig(raw: Partial<Config> | undefined | null, fallback: Config)
     maxContinuations: asInt(raw?.maxContinuations, 0) ?? fallback.maxContinuations,
     continuationPrompt: typeof prompt === 'string' ? prompt : fallback.continuationPrompt,
     continueOnError: asBool(raw?.continueOnError) ?? fallback.continueOnError,
+    honorProviderRetryAfter: asBool(raw?.honorProviderRetryAfter) ?? fallback.honorProviderRetryAfter,
+    maxProviderRetryAfterMs: asInt(raw?.maxProviderRetryAfterMs, 1000) ?? fallback.maxProviderRetryAfterMs,
     overrides: normOverrides(overridesRaw, fallback.overrides),
     logPath: typeof logPath === 'string' && logPath !== '' ? logPath : fallback.logPath,
   }
@@ -758,7 +776,7 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
       payload: {
         retryPolicy?: any
         code?: string
-        failure?: { code?: string }
+        failure?: { code?: string; providerRetryAfterMs?: number }
         provider?: string
         turn?: number
         agent?: any
@@ -782,6 +800,27 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
         maxDelayMs: override && override.maxDelayMs >= 0 ? override.maxDelayMs : cfg.maxDelayMs,
         jitterRatio: override && override.jitterRatio >= 0 ? override.jitterRatio : cfg.jitterRatio,
       }
+      // —— 尊重上游的 Retry-After 建议（2026-10-17，内核分支逐行读过）——
+      // dsh-llm-retry/lib/index.js:168-172：
+      //   建议 ≤ maxDelayMs → delayMs = 建议（按建议等）
+      //   建议 > maxDelayMs → mode=normal 直接 return next()（放弃重试）；mode=always 退回本地退避
+      // 所以这里做两件事：① 把 maxDelayMs 抬到装得下建议；② 建议超过用户上限时，把
+      // failure.providerRetryAfterMs 改写为上限 —— 官方监听器随后读到的是改写后的值，
+      // 于是落回「按建议等」分支，等到的是上限而不是放弃。
+      const hintRaw = payload?.failure?.providerRetryAfterMs
+      const hint = typeof hintRaw === 'number' && Number.isFinite(hintRaw) && hintRaw > 0 ? Math.floor(hintRaw) : 0
+      let retryAfterUsed = 0
+      if (cfg.enabled && hint > 0 && cfg.honorProviderRetryAfter) {
+        const cap = Math.max(1000, cfg.maxProviderRetryAfterMs)
+        const used = Math.min(hint, cap)
+        if (used < hint && payload?.failure) payload.failure.providerRetryAfterMs = used
+        eff.maxDelayMs = Math.max(eff.maxDelayMs, used)
+        retryAfterUsed = used
+        diag(
+          `provider retry-after: 上游建议 ${hint}ms → 采用 ${used}ms` +
+            `（maxDelayMs 抬到 ${eff.maxDelayMs}ms${used < hint ? '，建议已按上限截断' : ''}）`,
+        )
+      }
       diag(
         `request-error enabled=${cfg.enabled} code=${code || '(n/a)'} provider=${provider || '(n/a)'}` +
           ` model=${model || '(n/a)'}${override ? ` override=${override.provider}/${override.model}` : ''}`,
@@ -790,7 +829,7 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
         stats.retries += 1
         bump(stats.byCode, code)
         bump(stats.byProvider, provider)
-        pushStat({ t: Date.now(), kind: 'retry', code, provider, model, turn: payload?.turn, delayMs: eff.initialDelayMs })
+        pushStat({ t: Date.now(), kind: 'retry', code, provider, model, turn: payload?.turn, delayMs: retryAfterUsed > 0 ? retryAfterUsed : eff.initialDelayMs })
       }
       if (cfg.enabled && payload && payload.retryPolicy && typeof payload.retryPolicy === 'object') {
         const p = payload.retryPolicy
