@@ -823,7 +823,10 @@ export function apply(ctx: Context, config: Partial<Config> | undefined): void {
       }
       diag(
         `request-error enabled=${cfg.enabled} code=${code || '(n/a)'} provider=${provider || '(n/a)'}` +
-          ` model=${model || '(n/a)'}${override ? ` override=${override.provider}/${override.model}` : ''}`,
+          ` model=${model || '(n/a)'}${override ? ` override=${override.provider}/${override.model}` : ''}` +
+          // 上游有没有给 Retry-After 建议：这一项以前没记，导致「到底谁会说这句话」只能靠猜
+          // （2026-10-17 补上；无论开关是否开启都记，用作触发频率的实证）。
+          `${hint > 0 ? ` retryAfter=${hint}ms` : ''}`,
       )
       if (cfg.enabled) {
         stats.retries += 1
