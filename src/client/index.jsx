@@ -66,21 +66,31 @@ const DEFAULTS = {
   overrides: [],
 }
 
-// 已知错误码全集：核心 dsh-llm 规范码 + pi-ai/deepseek 两个适配器可能产出的全部
-// failure.code（扫自 node_modules 实际源码）。每条带 cat 分类（见 CODE_CATEGORIES），
-// 客户端按组渲染；warn=true 的码重试基本无意义（琥珀色），仅特殊场景手动勾选；
-// 列表之外的码（provider 手工配置）以「自定义」虚线 chip 出现。
-// 刻意不列（在 agent/request-error 之前抛出，勾选也永远命中不了）：dsh-llm 注册期码
-// NO_ADAPTER / INVALID_ADAPTER / DUPLICATE_ADAPTER / INVALID_CATALOG / *_DIRECTORY /
-// *_DISCOVERY / INVALID_MODEL_* / INVALID_PREPARED_CALL / REGISTRATION_DISPOSED /
-// INVARIANT，以及凭证与发现期码 NO_CREDENTIAL_STORE / UNSTORABLE_PROVIDER_ID /
-// DISCOVERY_FAILED / DISCOVERY_UNSUPPORTED。
+// 已知错误码全集：**模型请求链路**上会作为 failure.code 出现的码——扫自 dsh-llm /
+// dsh-llm-deepseek / dsh-llm-deepseek-account / dsh-llm-deepseek-api-key / dsh-llm-pi-ai /
+// dsh-llm-retry 六个包的实际源码（口径复核于 2026-10-17，脚本 tools/_codes-audit*.mjs）。
+// 每条带 cat 分类（见 CODE_CATEGORIES），客户端按组渲染；warn=true 的码重试基本无意义
+// （琥珀色），仅特殊场景手动勾选；列表之外的码（provider 手工配置）以「自定义」虚线 chip 出现。
+//
+// 刻意不列（**注册/装配期**抛出，在 agent/request-error 之前，勾选也永远命中不了）：
+// INVALID_ADAPTER / DUPLICATE_ADAPTER / INVALID_CATALOG / *_DIRECTORY / *_DISCOVERY /
+// INVALID_MODEL_* / INVALID_PREPARED_CALL / REGISTRATION_DISPOSED / INVARIANT /
+// NO_CREDENTIAL_STORE / UNSTORABLE_PROVIDER_ID。
+//
+// ★ 以下 5 个码是**例外，已收录**（2026-10-17 逐个核实调用点，不是凭上游 issue 推断）：
+//   · NO_ADAPTER —— 由 dsh-llm/lib/index.js 的 registration() 抛。它不仅被 prepareCall 调用
+//     （那条路径会被 dsh-agent-loop:1213 捕获并降级继续），还被 **adapterStream（L2314，流式路径）**
+//     调用 ⇒ 请求期真会出现，属可重试的瞬时故障。
+//   · ACCOUNT_SIGN_IN_REQUIRED / ACCOUNT_TOKEN_INVALID —— 由 dsh-llm-deepseek-account 的
+//     resolveAuth（L452）与其 onRequestError 的 401 映射（L462）抛出；官方插件自己在
+//     `scope.on("agent/error")` 里按 ACCOUNT_SIGN_IN_REQUIRED 分支处理，证明它会上抛。
+//   · CLIENT_UPGRADE_REQUIRED / MODEL_UNSUPPORTED —— 由 refuse() 抛，而 refuse 经
+//     dsh-llm-deepseek 适配器的 prepareCall（L2120）与 stream（L2128）里的 dependencies.admit 调用。
+//
 // 同样不列 LLM_STREAM_IDLE_TIMEOUT / DEEPSEEK_FILES_API_TIMEOUT：它们只是 dsh-timeout
 // TimeoutReason 的 code，从不作为 failure.code 出现——卡流被适配器改写为
 // LlmError(..., "TIMEOUT")（pi-ai:1883、deepseek:1627），Files API 超时则回退 base64
 // 继续发请求（deepseek:1732），根本不报错。
-// 判据：只有 `new LlmError(msg, CODE)`（或 HarnessError.code）才算错误码，
-// TimeoutReason / 注册期抛出的码都不算。宿主升级后按此口径重新扫一遍即可。
 // 分类口径：按「重试有没有恢复价值」分六组，从上到下递减。
 // transient 组是官方默认列表覆盖的瞬时故障；warn=true 的码一律落在后面四组。
 // 文案（分组名/说明、每个码的 tooltip）全部走字典 L.catLabel / L.catNote / L.codeDesc：
@@ -98,6 +108,8 @@ const KNOWN_CODES = [
   { code: 'INVALID_RESPONSE', cat: 'transient' },
   { code: 'PI_AI_ERROR', cat: 'transient' },
   { code: 'PI_AI_NOT_WARMED', cat: 'transient' },
+  // 适配器路由瞬时注销（上游 anywhere-labs/dsh-desktop#1133）：请求期真的会出现，值得重试
+  { code: 'NO_ADAPTER', cat: 'transient' },
   // —— 限流与配额 ——
   { code: 'RATE_LIMIT', cat: 'quota' },
   { code: 'QUOTA', cat: 'quota', warn: true },
@@ -112,10 +124,16 @@ const KNOWN_CODES = [
   { code: 'UNSUPPORTED_CONTENT', cat: 'content', warn: true },
   { code: 'UNSUPPORTED_REASONING_EFFORT', cat: 'content', warn: true },
   { code: 'FILES_API', cat: 'content', warn: true },
+  // 账号版 provider（dsh-llm-deepseek-account）：模型要求更高内核版本 / 内核不支持该模型
+  { code: 'CLIENT_UPGRADE_REQUIRED', cat: 'content', warn: true },
+  { code: 'MODEL_UNSUPPORTED', cat: 'content', warn: true },
   // —— 凭证与鉴权 ——
   { code: 'AUTH', cat: 'auth', warn: true },
   { code: 'INVALID_CREDENTIAL', cat: 'auth', warn: true },
   { code: 'MISSING_CREDENTIAL', cat: 'auth', warn: true },
+  // 账号版 provider：未登录 / 账号端点 401（token 可能已被账号层刷新，故 ACCOUNT_TOKEN_INVALID 允许重试）
+  { code: 'ACCOUNT_SIGN_IN_REQUIRED', cat: 'auth', warn: true },
+  { code: 'ACCOUNT_TOKEN_INVALID', cat: 'auth' },
   // —— 取消与兜底 ——
   { code: 'ABORTED', cat: 'misc', warn: true },
   { code: 'UNKNOWN', cat: 'misc', warn: true },
@@ -267,6 +285,7 @@ const ZH = {
     INVALID_RESPONSE: '响应结构不符合预期（偶发可试）',
     PI_AI_ERROR: 'pi-ai 兜底未知错误；STREAM_ERROR 流式失败归此类',
     PI_AI_NOT_WARMED: 'pi-ai 适配器尚未预热完成就被调用（启动竞态）；退避后重试通常能成',
+    NO_ADAPTER: '适配器路由瞬时注销（provider 装载/重载竞态）；退避后重试通常能成',
     RATE_LIMIT: '429 限流',
     QUOTA: '配额/余额耗尽（规范字面值就是 QUOTA）；重试无意义',
     INVALID_REQUEST: '400 类请求被拒（如 thinking 模式 reasoning_text 冲突、payload 超限）',
@@ -278,9 +297,13 @@ const ZH = {
     UNSUPPORTED_CONTENT: '该模型不支持此类内容（如图片）',
     UNSUPPORTED_REASONING_EFFORT: '该模型不支持所选推理档位',
     FILES_API: 'deepseek 文件服务 HTTP 失败',
+    CLIENT_UPGRADE_REQUIRED: '该模型要求更高版本的 DSH；升级内核而非重试',
+    MODEL_UNSUPPORTED: '当前 DSH 不支持该模型；换模型而非重试',
     AUTH: '401/403 认证被拒；修密钥而非重试',
     INVALID_CREDENTIAL: '凭证格式非法；修正存储值',
     MISSING_CREDENTIAL: '缺少 API Key；先去模型页配置',
+    ACCOUNT_SIGN_IN_REQUIRED: '账号版 provider 未登录；先登录再重试',
+    ACCOUNT_TOKEN_INVALID: '账号端点返回 401（账号层可能已刷新 token）；可重试',
     ABORTED: '调用方主动取消；绝不应重试',
     UNKNOWN: '非 LlmError 的通用兜底；勾选=广撒网',
   },
@@ -422,6 +445,7 @@ const EN = {
     INVALID_RESPONSE: 'Response shape did not match expectations (worth a try when rare)',
     PI_AI_ERROR: 'pi-ai catch-all; STREAM_ERROR stream failures land here',
     PI_AI_NOT_WARMED: 'pi-ai adapter called before warm-up (startup race); usually succeeds after backoff',
+    NO_ADAPTER: 'Adapter route transiently unregistered (provider load/reload race); usually succeeds after backoff',
     RATE_LIMIT: '429 rate limited',
     QUOTA: 'Quota/balance exhausted; retrying is pointless',
     INVALID_REQUEST: '400-class rejection (e.g. thinking/reasoning_text conflict, oversized payload)',
@@ -433,9 +457,13 @@ const EN = {
     UNSUPPORTED_CONTENT: 'The model does not support this content type (e.g. images)',
     UNSUPPORTED_REASONING_EFFORT: 'The model does not support the selected reasoning effort',
     FILES_API: 'deepseek file service HTTP failure',
+    CLIENT_UPGRADE_REQUIRED: 'This model needs a newer DSH; upgrade instead of retrying',
+    MODEL_UNSUPPORTED: 'This DSH does not support the model; switch models instead of retrying',
     AUTH: '401/403 rejected; fix the key rather than retry',
     INVALID_CREDENTIAL: 'Credential format is invalid; fix the stored value',
     MISSING_CREDENTIAL: 'API key missing; configure it on the model page first',
+    ACCOUNT_SIGN_IN_REQUIRED: 'Account provider is signed out; sign in before retrying',
+    ACCOUNT_TOKEN_INVALID: 'Account endpoint returned 401 (the account layer may have refreshed the token); retryable',
     ABORTED: 'Cancelled by the caller; never retry',
     UNKNOWN: 'Generic non-LlmError fallback; selecting it casts a wide net',
   },
