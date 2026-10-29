@@ -513,7 +513,14 @@ const CSS = [
   '.dlr-head{position:sticky;top:0;z-index:3;display:flex;flex-direction:column;gap:6px;padding:14px 0 12px;background:var(--dsw-alias-bg-base,#fff);box-shadow:0 1px 0 0 var(--dsw-alias-border-l2)}',
   // 真正吸住时（JS 置 data-stuck=1）再补一块同色背景带，盖住宿主 24px 内边距造成的那条缝；
   // 未吸住时不画那条带，静止态与原来一致（分隔线仍在）。
-  '.dlr-head[data-stuck="1"]{box-shadow:0 -24px 0 0 var(--dsw-alias-bg-base,#fff),0 1px 0 0 var(--dsw-alias-border-l2)}',
+  // 吸住时补缝（2026-10-29 重做）。上一版有两个错：
+  //  ① 判定把「内边距在滚动容器自己身上」当成前提（contentTop = scroller.top + paddingTop），
+  //     宿主若把内边距放在里层 wrapper 上，该条件永不成立 ⇒ data-stuck 从不置位 ⇒ 缝永远露着；
+  //  ② box-shadow 补缝高度受元素自身高度限制、偏移写死 24px，缝宽不是正好 24px 就漏。
+  // 现在：判定改成「滚动位置在变、顶栏在视口里的位置不变 ⇒ 已吸住」（不依赖任何 padding 数值），
+  //       补缝改用伪元素向上铺 200px（多出的部分被滚动容器裁掉，可见的正好是顶栏上方那段缝）。
+  '.dlr-head::before{content:"";position:absolute;left:0;right:0;bottom:100%;height:200px;background:var(--dsw-alias-bg-base,#fff);pointer-events:none;display:none}',
+  '.dlr-head[data-stuck="1"]::before{display:block}',
   // 顶栏两层：上层「标题 + 右列控件」，下层「一行短描述 + 状态行」。
   // 右列 .dlr-headCtl 就是**两排**：总开关在上、保存控件在下（用户明确要的排法）。
   // 描述已压到一行，不会再插进两排按钮中间。
@@ -1456,14 +1463,19 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
     let ticking = false
     const syncStuck = () => {
       ticking = false
-      if (!head || !scroller || !scroller.isConnected) return
-      const padTop = parseFloat(getComputedStyle(scroller).paddingTop) || 0
-      const contentTop = scroller.getBoundingClientRect().top + padTop
-      // 顶栏贴住内容盒顶、且确实滚动过 ⇒ 吸住；卡片还在下方时（没滚到）不补，避免盖住上面的内容
-      const stuck = scroller.scrollTop > 0 && head.getBoundingClientRect().top <= contentTop + 0.5
+      if (!head || !card.isConnected) return
+      const scrolled = scroller && scroller.isConnected ? scroller.scrollTop : 0
+      const headTop = head.getBoundingClientRect().top
+      const cardTop = card.getBoundingClientRect().top
+      // 顶栏是卡片第一个子元素、卡片没有上内边距 ⇒ 未吸住时 headTop === cardTop；
+      // 一旦吸住，卡片继续上滚而顶栏被钉住，headTop 就会明显大于 cardTop。
+      // 这个判据不需要知道滚动容器的内边距，也不依赖「两次采样」，单帧即可判定。
+      const stuck = scrolled > 0 && headTop > cardTop + 0.5
       if (stuck !== (head.dataset.stuck === '1')) head.dataset.stuck = stuck ? '1' : '0'
     }
     const onScroll = () => {
+      // 挂载时还没找到滚动容器（面板尚未可滚 / 宿主换了元素）：第一次滚动时再找一次
+      if (!scroller || !scroller.isConnected) apply()
       if (ticking) return
       ticking = true
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(syncStuck)
@@ -1472,7 +1484,8 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
     const apply = () => {
       if (target && target.isConnected) return
       let el = card.parentElement
-      for (let i = 0; i < 8 && el; i += 1) {
+      // 不再设深度上限：宿主把可滚容器放得深一些也照样能找到
+      while (el) {
         const cs = getComputedStyle(el)
         const scrolls =
           (cs.overflowY === 'auto' || cs.overflowY === 'scroll' || cs.overflowY === 'overlay') &&
@@ -1490,21 +1503,18 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
       }
     }
     apply()
-    if (scroller) {
-      scroller.addEventListener('scroll', onScroll, { passive: true })
-      scroller.__dlrScrollBound = true
-      syncStuck()
+    // 冒泡不到也要收到：scroll 事件不冒泡，但捕获阶段能在 document 上收到任意元素的滚动。
+    // 这样即使挂载时还没找到滚动容器、或宿主换了滚动元素，也能在第一次滚动时补上。
+    if (typeof document !== 'undefined') {
+      document.addEventListener('scroll', onScroll, { passive: true, capture: true })
     }
+    syncStuck()
     // 内容长高（加覆盖行 / 展开日志）之后才变成可滚的情况：尺寸变化时再找一次
     let ro = null
     try {
       if (typeof ResizeObserver !== 'undefined') {
         ro = new ResizeObserver(() => {
           apply()
-          if (scroller && !scroller.__dlrScrollBound) {
-            scroller.addEventListener('scroll', onScroll, { passive: true })
-            scroller.__dlrScrollBound = true
-          }
           syncStuck()
         })
         ro.observe(card)
@@ -1512,7 +1522,7 @@ function RetrySettingsRow({ useScope, scope, hostHome }) {
     } catch { /* 无 ResizeObserver 的内核：只在挂载时应用一次 */ }
     return () => {
       try { if (ro) ro.disconnect() } catch { /* ignore */ }
-      try { if (scroller) scroller.removeEventListener('scroll', onScroll) } catch { /* ignore */ }
+      try { if (typeof document !== 'undefined') document.removeEventListener('scroll', onScroll, { capture: true }) } catch { /* ignore */ }
       try { if (target && target.isConnected) target.style.willChange = prev } catch { /* ignore */ }
     }
   }, [])
